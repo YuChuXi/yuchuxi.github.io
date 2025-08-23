@@ -47,7 +47,7 @@
 
     // ====== 可修改：你的模型地址（glb/gltf）与初始缩放 ======
     const MODEL_URL = 'https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Models/master/2.0/Fox/glTF-Binary/Fox.glb';
-    const MODEL_SCALE = 0.01; // 根据模型尺寸调整
+    const MODEL_SCALE = 0.005; // 根据模型尺寸调整
 
     // ====== 基础 three.js 场景 ======
     const scene = new THREE.Scene();
@@ -89,6 +89,7 @@
       loadedModel = gltf.scene;
       loadedModel.traverse(obj => { if (obj.isMesh) { obj.castShadow = true; obj.receiveShadow = false; } });
       loadedModel.scale.setScalar(MODEL_SCALE);
+      loadedModel.position.set(0, 0, 0);
       loadedModel.visible = false; // 初始不显示，等放置
       scene.add(loadedModel);
     }, undefined, (err) => console.warn('模型加载失败：', err));
