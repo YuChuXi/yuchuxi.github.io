@@ -75,6 +75,11 @@
 
     const reticleLabel = document.getElementById('reticleLabel');
 
+    // ====== XR 命中测试源 ======
+    let hitTestSource = null;
+    let hitTestSourceRequested = false;
+    let localSpace = null;
+
     // ====== 加载 3D 模型 ======
     let loadedModel = null; // GLTF 场景
     let placed = false;     // 是否已放置
