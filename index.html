@@ -3,34 +3,33 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>AR 放置：在地板上渲染模型 (WebXR + three.js)</title>
+  <title>AR 放置模型</title>
   <style>
     html, body { margin:0; height:100%; overflow:hidden; background:#000; }
-    #ui {
-      position: fixed; inset: 0; pointer-events: none; display:flex; flex-direction:column; justify-content:space-between;
+    #enterAR {
+      position: fixed;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      pointer-events:auto; 
+      user-select:none; 
+      cursor:pointer; 
+      border:none; 
+      outline:none; 
+      padding:12px 18px; 
+      border-radius:999px; 
+      font-weight:600;
+      font-size: 16px;
       font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Noto Sans", "PingFang SC", "Microsoft YaHei", sans-serif;
-      color: #fff;
+      color:#111; 
+      background:#aafc;
     }
-    .topbar { pointer-events:auto; padding: 12px; display:flex; gap:8px; align-items:center; }
-    .pill { background: rgba(0,0,0,.55); backdrop-filter: blur(6px); border-radius: 999px; padding: 8px 12px; font-size:14px; }
-    .btn { pointer-events:auto; user-select:none; cursor:pointer; border:none; outline:none; padding:10px 14px; border-radius:999px; font-weight:600; }
-    .btn-primary { color:#111; background:#aafc; }
-    .btn-primary:active { transform: scale(0.98); }
-    .hint { align-self:center; margin-bottom:14vh; background:rgba(0,0,0,.45); padding:10px 14px; border-radius:12px; font-size:14px; text-align:center; max-width:80vw; }
-    #reticleLabel { position:fixed; left:50%; transform:translateX(-50%); bottom:18vh; background:rgba(0,0,0,.55); padding:6px 10px; border-radius:10px; font-size:12px; display:none; }
+    #enterAR:active { transform: translate(-50%, -50%) scale(0.98); }
+    #enterAR:disabled { cursor: not-allowed; }
   </style>
 </head>
 <body>
-  <div id="ui">
-    <div class="topbar">
-      <span class="pill">对准地板，出现圆环后轻触放置模型</span>
-      <button id="enterAR" class="btn btn-primary">进入 AR</button>
-      <button id="resetBtn" class="btn" style="background:#fff2; color:#fff">重置</button>
-      <a id="sceneBtn" class="btn" style="background:#fff2; color:#fff" target="_blank">备用AR</a>
-    </div>
-    <div class="hint">若按钮灰色/无响应，请在支持 WebXR 的 Android Chrome 上通过 HTTPS 或 localhost 打开</div>
-  </div>
-  <div id="reticleLabel">检测到平面，点击放置</div>
+  <button id="enterAR">进入 AR</button>
 
   <script type="importmap">
     {
@@ -41,31 +40,26 @@
     }
   </script>
   <script type="module">
-    // ====== 依赖（使用 three.js 官方 CDN） ======
     import * as THREE from 'three';
     import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
-    // ====== 可修改：你的模型地址（glb/gltf）与初始缩放 ======
     const MODEL_URL = 'https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Models/master/2.0/Fox/glTF-Binary/Fox.glb';
-    const MODEL_SCALE = 0.005; // 根据模型尺寸调整
+    const MODEL_SCALE = 0.005;
 
-    // ====== 基础 three.js 场景 ======
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera();
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: 'high-performance' });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.setSize(window.innerWidth, window.innerHeight);
-    renderer.xr.enabled = true; // 开启 WebXR
+    renderer.xr.enabled = true;
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     document.body.appendChild(renderer.domElement);
 
-    // 柔和的环境光 + 定向光（给模型一些体积感）
     scene.add(new THREE.HemisphereLight(0xffffff, 0x444466, 0.6));
     const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
     dirLight.position.set(1, 2, 1);
     scene.add(dirLight);
 
-    // ====== 命中检测可视化：环形准星（放在地面） ======
     const reticleGeo = new THREE.RingGeometry(0.09, 0.1, 48).rotateX(-Math.PI / 2);
     const reticleMat = new THREE.MeshBasicMaterial({ color: 0x66ccff, transparent: true, opacity: 0.8 });
     const reticle = new THREE.Mesh(reticleGeo, reticleMat);
@@ -73,57 +67,39 @@
     reticle.visible = false;
     scene.add(reticle);
 
-    const reticleLabel = document.getElementById('reticleLabel');
-
-    // ====== XR 命中测试源 ======
     let hitTestSource = null;
     let hitTestSourceRequested = false;
     let localSpace = null;
-
-    // ====== 加载 3D 模型 ======
-    let loadedModel = null; // GLTF 场景
-    let placed = false;     // 是否已放置
+    let loadedModel = null;
+    let placed = false;
 
     const loader = new GLTFLoader();
     loader.load(MODEL_URL, (gltf) => {
       loadedModel = gltf.scene;
-      loadedModel.traverse(obj => { if (obj.isMesh) { obj.castShadow = true; obj.receiveShadow = false; } });
+      loadedModel.traverse(obj => { if (obj.isMesh) { obj.castShadow = true; } });
       loadedModel.scale.setScalar(MODEL_SCALE);
-      loadedModel.position.set(0, 0, 0);
-      loadedModel.visible = false; // 初始不显示，等放置
+      loadedModel.visible = false;
       scene.add(loadedModel);
     }, undefined, (err) => console.warn('模型加载失败：', err));
 
-    // ====== WebXR AR 按钮（要求 hit-test） ======
     const enterBtn = document.getElementById('enterAR');
-    const resetBtn = document.getElementById('resetBtn');
-    const sceneBtn = document.getElementById('sceneBtn');
-    // Android 备用：直接拉起 Scene Viewer 原生 AR（不依赖 WebXR）
-    const sceneIntent = 'intent://arvr.google.com/scene-viewer/1.0?file=' + encodeURIComponent(MODEL_URL) + '&mode=ar_preferred#Intent;scheme=https;package=com.google.android.googlequicksearchbox;action=android.intent.action.VIEW;end;';
-    sceneBtn.href = sceneIntent;
 
-    // 使用 WebXR 原生 API 启动会话（不依赖 ARButton）
-
-    // 用我们自己的按钮触发进入 AR
-    // 兼容性与安全环境检查：必须 HTTPS 或 localhost，且设备/浏览器支持 WebXR
-    const hintEl = document.querySelector('.hint');
     function setEnterEnabled(ok, msg) {
       enterBtn.disabled = !ok;
       enterBtn.style.opacity = ok ? 1 : 0.5;
-      if (msg) hintEl.textContent = msg;
+      if (msg) enterBtn.title = msg;
     }
 
-    const isSecureOK = (location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1');
-    if (!isSecureOK) {
-      setEnterEnabled(false, '请通过 HTTPS 或 localhost 打开（当前为 ' + location.protocol.replace(':','') + '）');
+    if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
+      setEnterEnabled(false, '请通过 HTTPS 或 localhost 打开');
     } else if (!('xr' in navigator)) {
       setEnterEnabled(false, '当前浏览器不支持 WebXR，请使用 Android 版 Chrome 并更新 ARCore');
     } else {
-      try {
-        navigator.xr.isSessionSupported('immersive-ar').then((ok) => {
-          setEnterEnabled(ok, ok ? '对准地板，出现圆环后轻触放置模型' : '设备不支持 immersive-ar');
-        });
-      } catch(e) { /* 忽略 */ }
+      navigator.xr.isSessionSupported('immersive-ar').then((ok) => {
+        setEnterEnabled(ok, ok ? '点击进入 AR' : '设备不支持 AR');
+      }).catch(e => {
+        setEnterEnabled(false, '检查 AR 支持时出错');
+      });
     }
 
     enterBtn.addEventListener('click', async () => {
@@ -131,18 +107,17 @@
       try {
         const session = await navigator.xr.requestSession('immersive-ar', {
           requiredFeatures: ['hit-test'],
-          optionalFeatures: ['dom-overlay','anchors','light-estimation'],
+          optionalFeatures: ['dom-overlay'],
           domOverlay: { root: document.body }
         });
         renderer.xr.setReferenceSpaceType('local');
         await renderer.xr.setSession(session);
       } catch (e) {
-        console.error('requestSession failed', e);
+        console.error('无法启动 AR 会话', e);
         setEnterEnabled(false, '无法启动 AR：' + (e?.message || e));
       }
     });
 
-    // ====== XR 控制器与选择事件 ======
     const controller = renderer.xr.getController(0);
     controller.addEventListener('select', () => {
       if (!loadedModel || !reticle.visible) return;
@@ -153,35 +128,26 @@
     });
     scene.add(controller);
 
-    // 重置：移除放置，继续寻找地板
-    resetBtn.addEventListener('click', () => {
-      placed = false;
-      if (loadedModel) {
-        loadedModel.visible = false;
-      }
-    });
-
-    // 进入/退出会话的收尾
     renderer.xr.addEventListener('sessionstart', () => {
       hitTestSourceRequested = false; hitTestSource = null; localSpace = null;
-      reticle.visible = false; placed = false; if (loadedModel) loadedModel.visible = false;
+      placed = false;
+      if (loadedModel) loadedModel.visible = false;
+      enterBtn.style.display = 'none'; // 进入 AR 后隐藏按钮
     });
     renderer.xr.addEventListener('sessionend', () => {
       hitTestSourceRequested = false; hitTestSource = null; localSpace = null;
-      reticle.visible = false; reticleLabel.style.display = 'none';
+      reticle.visible = false;
+      enterBtn.style.display = 'block'; // 退出 AR 后显示按钮
     });
 
-    // ====== 渲染循环：持续做命中测试，更新 reticle ======
     renderer.setAnimationLoop((timestamp, frame) => {
       if (frame) {
         const session = renderer.xr.getSession();
 
         if (!hitTestSourceRequested) {
-          // 第一次请求 hit-test 源
           session.requestReferenceSpace('viewer').then((refSpace) => {
             session.requestHitTestSource({ space: refSpace }).then((source) => { hitTestSource = source; });
           });
-          renderer.xr.getReferenceSpace();
           localSpace = renderer.xr.getReferenceSpace();
           session.addEventListener('end', () => { hitTestSourceRequested = false; hitTestSource = null; });
           hitTestSourceRequested = true;
@@ -192,23 +158,16 @@
           if (hitTestResults.length > 0 && !placed) {
             const hit = hitTestResults[0];
             const pose = hit.getPose(localSpace);
-
-            // 更新 reticle 的位姿（与平面法线对齐）
             reticle.visible = true;
             reticle.matrix.fromArray(pose.transform.matrix);
-            reticleLabel.style.display = 'block';
-          } else {
-            if (!placed) {
-              reticle.visible = false; reticleLabel.style.display = 'none';
-            }
+          } else if (!placed) {
+            reticle.visible = false;
           }
         }
       }
-
       renderer.render(scene, camera);
     });
 
-    // 自适应窗口
     window.addEventListener('resize', () => {
       renderer.setSize(window.innerWidth, window.innerHeight);
     });
