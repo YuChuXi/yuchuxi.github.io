@@ -26,6 +26,7 @@
       <span class="pill">对准地板，出现圆环后轻触放置模型</span>
       <button id="enterAR" class="btn btn-primary">进入 AR</button>
       <button id="resetBtn" class="btn" style="background:#fff2; color:#fff">重置</button>
+      <a id="sceneBtn" class="btn" style="background:#fff2; color:#fff" target="_blank">备用AR</a>
     </div>
     <div class="hint">若按钮灰色/无响应，请在支持 WebXR 的 Android Chrome 上通过 HTTPS 或 localhost 打开</div>
   </div>
@@ -83,6 +84,10 @@
     // ====== WebXR AR 按钮（要求 hit-test） ======
     const enterBtn = document.getElementById('enterAR');
     const resetBtn = document.getElementById('resetBtn');
+    const sceneBtn = document.getElementById('sceneBtn');
+    // Android 备用：直接拉起 Scene Viewer 原生 AR（不依赖 WebXR）
+    const sceneIntent = 'intent://arvr.google.com/scene-viewer/1.0?file=' + encodeURIComponent(MODEL_URL) + '&mode=ar_preferred#Intent;scheme=https;package=com.google.android.googlequicksearchbox;action=android.intent.action.VIEW;end;';
+    sceneBtn.href = sceneIntent;
 
     const arButton = ARButton.createButton(renderer, {
       requiredFeatures: ['hit-test'], // 命中测试：识别平面（地板/桌面等）
@@ -115,9 +120,20 @@
       } catch(e) { /* 忽略 */ }
     }
 
-    enterBtn.addEventListener('click', () => {
+    enterBtn.addEventListener('click', async () => {
       if (enterBtn.disabled) return;
-      arButton.click();
+      try {
+        const session = await navigator.xr.requestSession('immersive-ar', {
+          requiredFeatures: ['hit-test'],
+          optionalFeatures: ['dom-overlay','anchors','light-estimation'],
+          domOverlay: { root: document.body }
+        });
+        renderer.xr.setReferenceSpaceType('local');
+        await renderer.xr.setSession(session);
+      } catch (e) {
+        console.error('requestSession failed', e);
+        setEnterEnabled(false, '无法启动 AR：' + (e?.message || e));
+      }
     });
 
     // ====== XR 控制器与选择事件 ======
