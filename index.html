@@ -32,11 +32,18 @@
   </div>
   <div id="reticleLabel">检测到平面，点击放置</div>
 
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.164.1/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.164.1/examples/jsm/"
+      }
+    }
+  </script>
   <script type="module">
     // ====== 依赖（使用 three.js 官方 CDN） ======
-    import * as THREE from 'https://unpkg.com/three@0.164.1/build/three.module.js';
-    import { GLTFLoader } from 'https://unpkg.com/three@0.164.1/examples/jsm/loaders/GLTFLoader.js';
-    import { ARButton } from 'https://unpkg.com/three@0.164.1/examples/jsm/webxr/ARButton.js';
+    import * as THREE from 'three';
+    import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
     // ====== 可修改：你的模型地址（glb/gltf）与初始缩放 ======
     const MODEL_URL = 'https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Models/master/2.0/Fox/glTF-Binary/Fox.glb';
@@ -89,14 +96,7 @@
     const sceneIntent = 'intent://arvr.google.com/scene-viewer/1.0?file=' + encodeURIComponent(MODEL_URL) + '&mode=ar_preferred#Intent;scheme=https;package=com.google.android.googlequicksearchbox;action=android.intent.action.VIEW;end;';
     sceneBtn.href = sceneIntent;
 
-    const arButton = ARButton.createButton(renderer, {
-      requiredFeatures: ['hit-test'], // 命中测试：识别平面（地板/桌面等）
-      optionalFeatures: ['dom-overlay', 'anchors', 'light-estimation'],
-      domOverlay: { root: document.body }
-    });
-    // 将 three.js 自带的 ARButton 加入 DOM（隐藏），我们用自定义按钮触发
-    document.body.appendChild(arButton);
-    arButton.style.display = 'none';
+    // 使用 WebXR 原生 API 启动会话（不依赖 ARButton）
 
     // 用我们自己的按钮触发进入 AR
     // 兼容性与安全环境检查：必须 HTTPS 或 localhost，且设备/浏览器支持 WebXR
