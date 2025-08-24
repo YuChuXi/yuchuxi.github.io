@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no" />
-  <title>QR Astronaut AR (Video-Overlay Fallback)</title>
+  <title>QR Astronaut AR (Fixed)</title>
 
   <!-- 稳定版本组合 -->
   <script src="https://cdn.jsdelivr.net/gh/hiukim/mind-ar-js@1.1.4/dist/mindar-image.prod.js"></script>
@@ -12,16 +12,18 @@
 
   <style>
     html,body { margin:0; height:100%; overflow:hidden; background:#000; }
-    /* 让 A-Frame 画布固定铺满，并且透明，视频能从底下透出来 */
+    /* 让 WebGL 画布铺满并且透明，视频能从底下透出来 */
     a-scene, canvas.a-canvas {
       position: fixed !important; inset: 0 !important; width: 100vw !important; height: 100vh !important;
-      z-index: 1 !important; background: transparent !important;
+      z-index: 1 !important; background: transparent !important; mix-blend-mode: normal !important;
     }
-    /* 给 MindAR 的 <video> 铺底（id/类名可能不同，运行时我们会在 JS 里精确设样式） */
+    /* 铺底的视频（不镜像！） */
     .ar-video-bg {
       position: fixed; inset: 0; width: 100vw; height: 100vh;
-      object-fit: cover; z-index: 0; background: #000;
-      transform: scaleX(-1);  /* 如需正像，把这一行删掉；保留则是“自拍镜像” */
+      object-fit: cover; z-index: 0; background: #000; mix-blend-mode: normal;
+      /* 如需镜像，把下一行改成 transform: scaleX(-1); */
+      transform: none;
+      pointer-events: none; /* 防止挡住点击/触摸 */
     }
     #hud {
       position: fixed; left: 12px; top: 12px; z-index: 9;
@@ -32,13 +34,32 @@
   </style>
 
   <script>
-    // 让宇航员脚底落到二维码平面 (y=0)
+    // 让宇航员脚底落到二维码平面 (y=0) + 强制材质为不透明，避免被视频“透”出来
     AFRAME.registerComponent('feet-on-marker', {
       schema: { yoffset: {type:'number', default: 0} },
       init: function () {
         this.el.addEventListener('model-loaded', () => {
           const obj = this.el.getObject3D('mesh');
           if (!obj) return;
+
+          // —— 材质修正：全部设为不透明 & 正常混合 & 写入深度 —— 
+          obj.traverse((n) => {
+            if (n.isMesh && n.material) {
+              const mats = Array.isArray(n.material) ? n.material : [n.material];
+              mats.forEach(m => {
+                m.transparent = false;
+                m.opacity = 1.0;
+                m.depthWrite = true;
+                m.depthTest = true;
+                m.alphaTest = 0.0;
+                m.blending = THREE.NormalBlending;
+                m.side = THREE.FrontSide;
+                m.needsUpdate = true;
+              });
+            }
+          });
+
+          // —— 脚底贴地 ——（计算包围盒，把 minY 对齐到 y=0）
           const parent = this.el.object3D;
           const savedRot = parent.rotation.clone();
           parent.rotation.set(0,0,0);
@@ -52,45 +73,32 @@
       }
     });
 
-    // —— 关键修复：把相机 <video> 铺到 WebGL 画布下，强制可见 ——
+    // 把 MindAR 的 <video> 铺在 WebGL 画布下方（非镜像）
     function mountVideoUnderCanvas(sceneEl) {
       const sys = sceneEl.systems['mindar-image-system'];
-      // MindAR 里常见是 sys.video 或 sys._video；兜底用 document.querySelector
       const video = sys && (sys.video || sys._video) || document.querySelector('video');
       if (!video) return;
 
-      // 确保 iOS 可播
       video.setAttribute('playsinline', '');
       video.setAttribute('webkit-playsinline', '');
       video.setAttribute('muted', '');
       video.muted = true;
-      // 铺底样式
+
       video.classList.add('ar-video-bg');
+      if (!video.isConnected) document.body.prepend(video);
 
-      // 如果 video 不在文档里，插入到 body 最前（在 canvas 之下）
-      if (!video.isConnected) {
-        document.body.prepend(video);
-      } else {
-        // 已在文档里也强制样式
-        Object.assign(video.style, {
-          position: 'fixed', inset: '0', width: '100vw', height: '100vh',
-          objectFit: 'cover', zIndex: '0', background: '#000'
-        });
-      }
-
-      // 让 WebGL 画布透明（不挡住底部视频）
+      // 确保渲染器透明，不遮住视频
       try {
-        const renderer = sceneEl.renderer;
-        if (renderer) {
-          renderer.setClearAlpha(0); // 透明清屏
-          // 兼容某些环境
-          if (renderer.getContextAttributes && !renderer.getContextAttributes().alpha) {
-            sceneEl.setAttribute('renderer', 'alpha: true');
+        const r = sceneEl.renderer;
+        if (r) {
+          r.setClearAlpha(0);
+          if (r.getContextAttributes && !r.getContextAttributes().alpha) {
+            sceneEl.setAttribute('renderer', 'alpha: true; colorManagement: true; physicallyCorrectLights: false; antialias: true; sortObjects: true');
           }
         }
       } catch (_) {}
 
-      // 保险：反复确认一次（某些浏览器会在全屏/旋转后重置布局）
+      // 页面旋转/全屏后重挂样式（兼容 iOS）
       setTimeout(() => mountVideoUnderCanvas(sceneEl), 1000);
     }
 
@@ -99,7 +107,6 @@
       const marker = document.getElementById('marker');
       const status = document.getElementById('status');
 
-      // MindAR 初始化好后挂载视频
       scene.addEventListener('arReady', () => {
         status.textContent = '✔ 摄像头已启动，开始识别二维码…';
         mountVideoUnderCanvas(scene);
@@ -107,8 +114,8 @@
       scene.addEventListener('arError', (e) => {
         status.textContent = '✖ AR 启动失败：' + (e && e.detail ? e.detail : '');
       });
-      marker.addEventListener('targetFound',  () => status.textContent = '✔ 识别成功：宇航员已锁定二维码');
-      marker.addEventListener('targetLost',   () => status.textContent = '… 正在重新锁定二维码');
+      marker.addEventListener('targetFound', () => status.textContent = '✔ 识别成功：宇航员已锁定二维码');
+      marker.addEventListener('targetLost',  () => status.textContent = '… 正在重新锁定二维码');
     });
   </script>
 </head>
@@ -120,7 +127,8 @@
   <a-scene
     mindar-image="imageTargetSrc: ./targets.mind; autoStart: true;"
     color-space="sRGB"
-    renderer="colorManagement: true; physicallyCorrectLights: true; antialias: true"
+    renderer="alpha: true; colorManagement: true; physicallyCorrectLights: false; antialias: true; sortObjects: true"
+    loading-screen="enabled: false"
     vr-mode-ui="enabled: false"
     device-orientation-permission-ui="enabled: true"
   >
@@ -135,7 +143,7 @@
         gltf-model="#astronaut"
         feet-on-marker
         rotation="90 0 0"
-        scale="0.2 0.2 0.2"
+        scale="1 1 1"
       ></a-entity>
     </a-entity>
 
