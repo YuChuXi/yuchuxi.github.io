@@ -2,54 +2,48 @@
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport"
-        content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
-  <title>AR：宇航员粘在二维码上（IMU 协同预测版）</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+  <title>AR：宇航员粘在二维码上（安全稳态版）</title>
 
-  <!-- 映射 three 与 mindar 的 ES 模块（避免版本冲突） -->
+  <!-- three 的 importmap（确保 ESM loader 路径稳定） -->
   <script type="importmap">
   {
     "imports": {
       "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
-      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/",
-      "mindar-image-three": "https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-three.prod.js"
+      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
     }
   }
   </script>
+
+  <!-- MindAR 用 UMD 直接挂到 window（最稳、不再折腾 ESM 封装） -->
+  <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-three.prod.js"></script>
 
   <style>
     html, body {
       margin: 0; padding: 0;
       width: 100vw; height: 100dvh;
-      overflow: hidden;
-      background: #000;
-      overscroll-behavior: none;
-      touch-action: none;
+      overflow: hidden; background: #000;
+      overscroll-behavior: none; touch-action: none;
     }
     #ar {
-      position: fixed; inset: 0;
-      width: 100vw; height: 100dvh;
+      position: fixed; inset: 0; width: 100vw; height: 100dvh;
       background: #000; overflow: hidden;
     }
+    /* MindAR 注入的 video/canvas/overlay 铺满容器 */
     #ar video, #ar canvas, #ar .mindar-ui-overlay, #ar .mindar-ui-scanning {
-      position: absolute !important;
-      inset: 0 !important;
+      position: absolute !important; inset: 0 !important;
       width: 100% !important; height: 100% !important;
       max-width: 100% !important; max-height: 100% !important;
-      display: block !important;
-      object-fit: cover;
-      overflow: hidden;
+      display: block !important; object-fit: cover; overflow: hidden;
     }
     #enter {
       position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
-      z-index: 9999; padding: 12px 18px;
-      border: 0; border-radius: 999px; background: #8892ff; color: #111; font-weight: 700;
-      pointer-events: auto;
+      z-index: 9999; padding: 12px 18px; border: 0; border-radius: 999px;
+      background: #8892ff; color: #111; font-weight: 700;
     }
     #hint {
-      position: fixed; left: 12px; right: 12px; bottom: 72px;
-      z-index: 9999; color: #9ad; font: 14px/1.5 system-ui; text-shadow: 0 1px 2px #000;
-      pointer-events: none;
+      position: fixed; left: 12px; right: 12px; bottom: 72px; z-index: 9999;
+      color: #9ad; font: 14px/1.5 system-ui; text-shadow: 0 1px 2px #000; pointer-events: none;
     }
   </style>
 </head>
@@ -61,130 +55,51 @@
   <script type="module">
     import * as THREE from 'three';
     import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-    import { MindARThree } from 'mindar-image-three';
 
-    // ====== 配置 ======
-    const MODEL_URL     = 'yuhangyuan.glb';
-    const TARGET_URL    = 'qr-target.mind';
-    const MODEL_SCALE   = 0.5;
-    const EPSILON_LIFT  = 0.002;       // 2mm 防穿插
-    const ALIGN_TO      = 'posZ';      // MindAR 目标法线沿 Z；反了改 'negZ'
+    // ===== 配置 =====
+    const MODEL_URL    = 'yuhangyuan.glb';
+    const TARGET_URL   = 'qr-target.mind';
+    const MODEL_SCALE  = 0.05;
+    const EPSILON_LIFT = 0.002;     // 脚底上抬 2mm 防穿插
+    const ALIGN_TO     = 'posZ';    // MindAR 目标法线沿 Z；反了改 'negZ'
 
-    // —— 稳定/延迟权衡旋钮（可按需改大/改小）——
-    const MINDAR_FILTER_MINCF = 0.0015; // ↑ 跟手  ↓ 稳定；建议 0.0003 ~ 0.005
-    const MINDAR_FILTER_BETA  = 0.06;   // ↑ 跟手  ↓ 稳定；建议 0.02 ~ 0.2
-    const WARMUP_TOLERANCE    = 2;      // 连续2帧才算“找到”
-    const MISS_TOLERANCE      = 10;     // 连续10帧才算“丢失”
+    // MindAR 内置滤波：更偏“跟手”（抖动由我们在下游平滑）
+    const MINDAR_FILTER_MINCF = 0.002;
+    const MINDAR_FILTER_BETA  = 0.08;
+    const WARMUP_TOLERANCE    = 2;
+    const MISS_TOLERANCE      = 10;
 
-    const SMOOTH_POS_ALPHA    = 0.40;   // 二次平滑（位置） 0~1，越大越跟手
-    const SMOOTH_ROT_ALPHA    = 0.50;   // 二次平滑（旋转）
-    const SMOOTH_SCL_ALPHA    = 0.45;   // 二次平滑（缩放）
-    const LOST_HIDE_DELAY_MS  = 250;    // 丢失缓冲（更灵敏）
+    // 我们的“二次平滑 + 预测”参数
+    const HOLD_LOST_MS        = 250;       // 丢失后延迟隐藏（去闪烁）
+    const PREDICT_HORIZON_MS  = 40;        // 预测时间窗（降低延迟的关键）
+    const MAX_POS_VEL         = 0.8;       // 位置速度上限 m/s（防外推过头）
+    const MAX_ANG_VEL         = 3.0;       // 角速度上限 rad/s（约 172°/s）
 
-    const IMU_GAIN            = 0.85;   // IMU 旋转补偿强度 0~1（越大越“像原生”）
-    const IMU_FREQ_HZ         = 120;    // 传感器频率（支持 Gyroscope API 时生效）
+    // 平滑（越大越跟手）
+    const ALPHA_POS = 0.55;
+    const ALPHA_ROT = 0.60;
+    const ALPHA_SCL = 0.55;
 
-    const $ = (s)=>document.querySelector(s);
+    // ===== DOM =====
+    const $ = s => document.querySelector(s);
     const container = $('#ar');
     const enterBtn  = $('#enter');
     const hintEl    = $('#hint');
-    const hint = (t)=>{ hintEl.textContent = t || ''; };
+    const hint = t => hintEl.textContent = t || '';
 
-    // ====== IMU（陀螺仪）融合：累积 orientation，并做“晚补偿” ======
-    const imu = {
-      has: false, started: false,
-      quat: new THREE.Quaternion(),
-      lastQuat: new THREE.Quaternion(),
-      lastTS: 0
-    };
-    let gyroSensor = null;
-
-    async function setupIMU() {
-      // iOS 权限
-      try {
-        if (typeof DeviceMotionEvent !== 'undefined' &&
-            typeof DeviceMotionEvent.requestPermission === 'function') {
-          await DeviceMotionEvent.requestPermission(); // 需用户手势内调用
-        }
-      } catch(_){}
-
-      // 优先使用 Generic Sensor API（rad/s）
-      if ('Gyroscope' in window) {
-        try {
-          gyroSensor = new Gyroscope({ frequency: IMU_FREQ_HZ });
-          gyroSensor.addEventListener('reading', () => {
-            const t = performance.now() * 0.001;
-            const dt = imu.lastTS ? (t - imu.lastTS) : 0;
-            imu.lastTS = t;
-            const wx = gyroSensor.x || 0;  // rad/s
-            const wy = gyroSensor.y || 0;
-            const wz = gyroSensor.z || 0;
-            const angle = Math.hypot(wx, wy, wz) * dt;
-            if (angle > 0) {
-              const axis = new THREE.Vector3(wx, wy, wz).normalize();
-              const dq = new THREE.Quaternion().setFromAxisAngle(axis, angle);
-              imu.quat.multiply(dq);
-              imu.started = true;
-            }
-          });
-          gyroSensor.start();
-          imu.has = true;
-          return;
-        } catch(_){}
-      }
-
-      // 退化到 DeviceMotion（deg/s）
-      if (window.DeviceMotionEvent) {
-        window.addEventListener('devicemotion', (e) => {
-          const t = e.timeStamp * 0.001;
-          const dt = imu.lastTS ? (t - imu.lastTS) : 0;
-          imu.lastTS = t;
-          const rr = e.rotationRate || {};
-          const wx = THREE.MathUtils.degToRad(rr.beta || 0);   // X
-          const wy = THREE.MathUtils.degToRad(rr.gamma || 0);  // Y
-          const wz = THREE.MathUtils.degToRad(rr.alpha || 0);  // Z
-          const angle = Math.hypot(wx, wy, wz) * dt;
-          if (angle > 0) {
-            const axis = new THREE.Vector3(wx, wy, wz).normalize();
-            const dq = new THREE.Quaternion().setFromAxisAngle(axis, angle);
-            imu.quat.multiply(dq);
-            imu.started = true;
-          }
-        }, { passive: true });
-        imu.has = true;
-      }
-    }
-
-    // 将“陀螺短时旋转 Δq”转成对 smoothed 的“反向补偿”（晚补偿）
-    function applyImuLateCompensation(smoothed) {
-      if (!imu.has || !imu.started || !smoothed.visible) return;
-
-      // Δq = q_cur * inverse(q_prev)
-      const qDelta = imu.quat.clone().multiply(imu.lastQuat.clone().invert());
-      imu.lastQuat.copy(imu.quat);
-
-      // 目标：把场景物体“抵消”这段相机自转 → 乘以逆 Δq
-      const invDelta = qDelta.clone().invert();
-
-      // 部分补偿（IMU_GAIN 作为强度），用 slerp 混合当前姿态与“补偿后姿态”
-      const compensated = smoothed.quaternion.clone();
-      compensated.premultiply(invDelta); // world 空间补偿（smoothed 父级为 scene）
-
-      smoothed.quaternion.slerp(compensated, IMU_GAIN);
-    }
-
-    // ====== 主流程 ======
+    // ===== 主流程 =====
     let started = false;
-
     enterBtn.addEventListener('click', async () => {
       if (started) return; started = true; enterBtn.style.display = 'none';
       hint('正在启动相机…');
 
       try {
-        // 先申请 IMU（在用户手势里，iOS 需要）
-        await setupIMU();
+        const { MINDAR } = window;
+        if (!MINDAR) throw new Error('MindAR 未加载');
 
-        // MindAR（更灵敏的参数）
+        const MindARThree = MINDAR.IMAGE.MindARThree;
+
+        // 1) 初始化 MindARThree
         const mindarThree = new MindARThree({
           container,
           imageTargetSrc: TARGET_URL,
@@ -197,16 +112,16 @@
         });
         const { renderer, scene, camera } = mindarThree;
 
-        // 光照
+        // 2) 光照
         scene.add(new THREE.HemisphereLight(0xffffff, 0x444466, 0.7));
         const dir = new THREE.DirectionalLight(0xffffff, 0.8);
         dir.position.set(1,2,1); scene.add(dir);
 
-        // 锚点（第 0 个目标）
+        // 3) 锚点（第 0 个目标）
         const anchor = mindarThree.addAnchor(0);
 
-        // 二次平滑容器 + 让模型的 +Y 轴对齐到目标法线（Z）
-        const smoothed = new THREE.Group();
+        // 4) 平滑容器 + “脚粘平面”的 peg（把模型 +Y 轴旋到目标 Z）
+        const smoothed = new THREE.Group();   // 渲染用
         scene.add(smoothed);
 
         const peg = new THREE.Group();
@@ -217,61 +132,117 @@
           peg.quaternion.copy(new THREE.Quaternion().setFromUnitVectors(from, to));
         }
 
-        // 防闪烁（丢失缓冲）
-        let loseTimer = null;
-        anchor.onTargetFound = () => { clearTimeout(loseTimer); smoothed.visible = true; };
-        anchor.onTargetLost  = () => { loseTimer = setTimeout(()=> smoothed.visible = false, LOST_HIDE_DELAY_MS); };
+        // 5) 防闪烁
+        let loseTimer = null, tracking = false;
+        anchor.onTargetFound = () => { tracking = true;  clearTimeout(loseTimer); smoothed.visible = true; };
+        anchor.onTargetLost  = () => { tracking = false; loseTimer = setTimeout(()=> smoothed.visible = false, HOLD_LOST_MS); };
 
-        // 模型
+        // 6) 模型
         const loader = new GLTFLoader();
         loader.load(MODEL_URL, (gltf)=>{
           const model = gltf.scene;
           model.traverse(o => { if (o.isMesh){ o.castShadow = false; o.receiveShadow = false; }});
           model.scale.setScalar(MODEL_SCALE);
-
           const box = new THREE.Box3().setFromObject(model);
           const footYOffset = -box.min.y + EPSILON_LIFT;
           model.position.set(0, footYOffset, 0);
-
           peg.add(model);
           hint('对准二维码：宇航员会用“脚”粘在二维码平面上（不管躺着还是竖着）。');
         }, undefined, (err)=>{ console.warn(err); hint('模型加载失败'); });
 
-        // 启动 MindAR
+        // 7) 启动
         await mindarThree.start();
 
-        // 全屏 & 优先响应（降像素比上限）
+        // 8) 尺寸
         function sizeToContainer() {
           const w = container.clientWidth, h = container.clientHeight;
-          renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.25));
+          renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.25)); // 更稳帧
           renderer.setSize(w, h, false);
         }
         sizeToContainer();
         window.addEventListener('resize', sizeToContainer);
 
-        // 动画循环：读取 anchor 姿态 → 二次平滑 → 叠加 IMU 晚补偿
-        const tmpPos = new THREE.Vector3(), tmpQuat = new THREE.Quaternion(), tmpScale = new THREE.Vector3();
+        // 9) 预测 + 平滑
+        const measPos  = new THREE.Vector3(), measQuat = new THREE.Quaternion(), measScl = new THREE.Vector3();
+        const prevPos  = new THREE.Vector3(), prevQuat = new THREE.Quaternion();
+        let   prevT    = 0;
+        let   inited   = false;
 
-        renderer.setAnimationLoop(() => {
-          // 1) 用 anchor 的世界姿态作为“测量值”
-          anchor.group.matrixWorld.decompose(tmpPos, tmpQuat, tmpScale);
+        function quatPow(q, k) { // 把四元数 q（旋转）“乘方”k，用于外推
+          const aa = new THREE.Euler(); // 用 axis-angle 更稳：自己算
+          const axis = new THREE.Vector3();
+          const angle = 2 * Math.acos(THREE.MathUtils.clamp(q.w, -1, 1));
+          if (angle < 1e-6) return new THREE.Quaternions(0,0,0,1); // 近似单位
+          const s = Math.sin(angle/2);
+          axis.set(q.x/s, q.y/s, q.z/s).normalize();
+          const nq = new THREE.Quaternion().setFromAxisAngle(axis, angle * k);
+          return nq;
+        }
 
-          // 2) 二次平滑（减少噪声，但力度较轻以减小延迟）
-          if (!smoothed.userData.init) {
-            smoothed.position.copy(tmpPos);
-            smoothed.quaternion.copy(tmpQuat);
-            smoothed.scale.copy(tmpScale);
-            smoothed.userData.init = true;
-            imu.lastQuat.copy(imu.quat); // 初始化 IMU 基线
-          } else {
-            smoothed.position.lerp(tmpPos, SMOOTH_POS_ALPHA);
-            smoothed.quaternion.slerp(tmpQuat, SMOOTH_ROT_ALPHA);
-            smoothed.scale.lerp(tmpScale, SMOOTH_SCL_ALPHA);
+        const tmpPos = new THREE.Vector3(), tmpQuat = new THREE.Quaternion(), tmpScl = new THREE.Vector3();
+        const deltaQ = new THREE.Quaternion();
+
+        renderer.setAnimationLoop((ts) => {
+          // 读取“测量”姿态（anchor 的世界矩阵）
+          anchor.group.matrixWorld.decompose(measPos, measQuat, measScl);
+
+          const now = ts * 0.001; // 秒
+          const dt  = prevT ? Math.max(1e-4, now - prevT) : 0;
+
+          // 计算“速度”（上一帧测量 → 当前测量）
+          let predPos = measPos.clone();
+          let predQuat = measQuat.clone();
+
+          if (prevT > 0) {
+            // 线速度
+            tmpPos.copy(measPos).sub(prevPos).divideScalar(dt);
+            const speed = tmpPos.length();
+            if (speed > MAX_POS_VEL) tmpPos.multiplyScalar(MAX_POS_VEL / Math.max(speed, 1e-6));
+            // 外推 PREDICT_HORIZON_MS
+            predPos.add(tmpPos.multiplyScalar(PREDICT_HORIZON_MS / 1000));
+
+            // 角速度
+            deltaQ.copy(prevQuat.conjugate()).multiply(measQuat); // dq = q_prev^-1 * q_meas
+            // 从 dq 取角度
+            let ang = 2 * Math.acos(THREE.MathUtils.clamp(deltaQ.w, -1, 1));
+            let ax, ay, az;
+            if (ang < 1e-6) {
+              ax = ay = az = 0;
+            } else {
+              const s = Math.sin(ang/2);
+              ax = deltaQ.x / s; ay = deltaQ.y / s; az = deltaQ.z / s;
+            }
+            const w = ang / dt; // rad/s
+            let wClamp = Math.min(w, MAX_ANG_VEL);
+            // 角速度方向
+            const axis = new THREE.Vector3(ax, ay, az);
+            if (axis.lengthSq() > 1e-8) {
+              axis.normalize();
+              const angPred = wClamp * (PREDICT_HORIZON_MS / 1000);
+              const dqPred = new THREE.Quaternion().setFromAxisAngle(axis, angPred);
+              predQuat.multiply(dqPred);
+            }
           }
 
-          // 3) 陀螺“晚补偿”：把相机的短时旋转逆向施加到物体上 → 降延迟感
-          applyImuLateCompensation(smoothed);
+          // 首帧直接对齐
+          if (!inited) {
+            smoothed.position.copy(predPos);
+            smoothed.quaternion.copy(predQuat);
+            smoothed.scale.copy(measScl);
+            inited = true;
+          } else {
+            // 指数平滑到“预测值”
+            smoothed.position.lerp(predPos, ALPHA_POS);
+            smoothed.quaternion.slerp(predQuat, ALPHA_ROT);
+            smoothed.scale.lerp(measScl, ALPHA_SCL);
+          }
 
+          // 记录上一测量
+          prevPos.copy(measPos);
+          prevQuat.copy(measQuat);
+          prevT = now;
+
+          // 如果暂时丢失 tracking，就继续渲染“上一次姿态”（不突变）
           renderer.render(scene, camera);
         });
       } catch (e) {
