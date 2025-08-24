@@ -16,17 +16,21 @@
   <div id="hint">允许相机后，对准你桌上/墙上的二维码。</div>
 
   <script type="module">
-    // --- 使用 ES Module 版本 ---
+    // Three.js（ESM）
     import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.152.2/build/three.module.js';
     import { GLTFLoader } from 'https://cdn.jsdelivr.net/npm/three@0.152.2/examples/jsm/loaders/GLTFLoader.js';
-    import { MindARThree } from 'https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-three.module.js';
 
-    const MODEL_URL   = 'yuhangyuan.glb';   // 你的宇航员
-    const TARGET_URL  = 'qr-target.mind';   // 用二维码图编译出的 .mind
-    const MODEL_SCALE = 0.05;               // 模型缩放
-    const EPSILON_LIFT = 0.002;             // 抬脚 2mm，避免穿插
-    // MindAR 中目标平面法线沿 Z 轴；若朝向相反，把下面改成 'negZ'
-    const ALIGN_TO = 'posZ'; // 'posZ' 或 'negZ'
+    // MindAR（把 UMD 自动转成 ES Module 的稳定做法）
+    // 这行是关键替换：用 esm.run 将 prod.js 包装为 ESM
+    import * as mindar from 'https://esm.run/mind-ar@1.2.5/dist/mindar-image-three.prod.js';
+    const { MindARThree } = mindar;
+
+    const MODEL_URL   = 'yuhangyuan.glb';
+    const TARGET_URL  = 'qr-target.mind';
+    const MODEL_SCALE = 0.05;
+    const EPSILON_LIFT = 0.002;
+    // MindAR 中目标平面法线沿 Z 轴；若脚朝向反了，改成 'negZ'
+    const ALIGN_TO = 'posZ'; // 'posZ' | 'negZ'
 
     const enterBtn = document.getElementById('enter');
     const hint = (t)=>{ document.getElementById('hint').textContent = t || ''; };
@@ -40,7 +44,7 @@
         // 1) 初始化 MindARThree（纯网页图像跟踪）
         const mindarThree = new MindARThree({
           container: document.body,
-          imageTargetSrc: TARGET_URL, // 你的二维码目标
+          imageTargetSrc: TARGET_URL,
           maxTrack: 1,
           uiLoading: 'no', uiScanning: 'no', uiError: 'yes'
         });
@@ -52,10 +56,10 @@
         dir.position.set(1,2,1);
         scene.add(dir);
 
-        // 3) 锚点：索引 0 对应 .mind 文件中的第一个目标（你的二维码）
+        // 3) 锚点（.mind 的第 0 个目标即二维码）
         const anchor = mindarThree.addAnchor(0);
 
-        // 4) peg：把模型的本地 +Y 轴旋到“目标法线（Z 轴）”
+        // 4) peg：把模型本地 +Y 轴旋到“目标法线（Z 轴）”
         const peg = new THREE.Group();
         anchor.group.add(peg);
         {
@@ -64,7 +68,7 @@
           peg.quaternion.copy(new THREE.Quaternion().setFromUnitVectors(from, to));
         }
 
-        // 5) 载入模型，并把“脚底”抬到贴合目标平面（y=0）
+        // 5) 载入模型，脚底贴到二维码平面（y=0）
         const loader = new GLTFLoader();
         loader.load(MODEL_URL, (gltf)=>{
           const model = gltf.scene;
@@ -72,7 +76,7 @@
           model.scale.setScalar(MODEL_SCALE);
 
           const box = new THREE.Box3().setFromObject(model);
-          const footYOffset = -box.min.y + EPSILON_LIFT; // 脚底抬到 y=0
+          const footYOffset = -box.min.y + EPSILON_LIFT; // 脚底抬到 y=0（加 2mm 防穿插）
           model.position.set(0, footYOffset, 0);
 
           peg.add(model);
