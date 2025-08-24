@@ -6,26 +6,19 @@
   <title>QR Marker Astronaut AR</title>
   <style>
     html,body { margin:0; height:100%; overflow:hidden; background:#000; }
-    #enterAR {
-      position: fixed; left: 50%; top: 50%; transform: translate(-50%,-50%);
-      padding: 12px 18px; border: 0; border-radius: 999px; font-weight: 700;
-      background: #aafc; color:#111; cursor:pointer; z-index:10;
-    }
-    #hud { position: fixed; left:12px; top:12px; z-index:9; padding:6px 10px; border-radius:10px; background:#0008; color:#fff; font:14px/1.2 system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "PingFang SC", "Microsoft YaHei", sans-serif; }
+    #enterAR { position: fixed; left:50%; top:50%; transform: translate(-50%,-50%);
+      padding:12px 18px; border:0; border-radius:999px; font-weight:700; background:#aafc; color:#111; z-index:10; cursor:pointer; }
+    #hud { position:fixed; left:12px; top:12px; z-index:9; padding:6px 10px; border-radius:10px; background:#0008; color:#fff; font:14px/1.2 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,"PingFang SC","Microsoft YaHei",sans-serif; }
   </style>
 
-  <!-- 1) 先加载 A-Frame（确保没有 type="module"） -->
-  <script src="https://cdn.jsdelivr.net/npm/aframe@1.4.1/dist/aframe.min.js"></script>
-  <!-- 可选后备：主 CDN 失败时用另一个源 -->
-  <script>if(!window.AFRAME){document.write('<script src="https://unpkg.com/aframe@1.4.1/dist/aframe.min.js"><\/script>')}</script>
+  <!-- 1) 本地 A-Frame（不要 async / defer / type=module） -->
+  <script src="./libs/aframe.min.js"></script>
+  <!-- 2) 本地 MindAR A-Frame 适配层（必须在 A-Frame 之后） -->
+  <script src="./libs/mindar-image-aframe.prod.js"></script>
 
-  <!-- 2) 再加载 MindAR 的 A-Frame 适配层 -->
-  <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
-
-  <!-- 3) 等 A-Frame 完全就绪后再注册组件/写任何依赖 AFRAME 的代码 -->
+  <!-- 3) 你的代码，等 A-Frame 完成初始化再执行 -->
   <script>
-    window.addEventListener('aframe-loaded', () => {
-      // 这里开始就一定有 window.AFRAME 和 window.THREE 了
+    function registerComponents() {
       AFRAME.registerComponent('feet-on-marker', {
         schema: { yoffset: {type:'number', default: 0} },
         init: function () {
@@ -40,7 +33,7 @@
             const minY = box.min.y;
             parent.rotation.copy(savedRot);
             parent.updateMatrixWorld(true);
-            this.el.object3D.position.y = this.data.yoffset - minY;
+            this.el.object3D.position.y = this.data.yoffset - minY; // 脚贴到 marker 平面
           });
         }
       });
@@ -54,17 +47,26 @@
         try {
           await scene.systems['mindar-image-system'].start();
         } catch (e) {
-          status.textContent = '✖ 无法开启摄像头：' + (e?.message || e);
+          status.textContent = '✖ 无法开启摄像头：' + (e && e.message ? e.message : e);
           startBtn.style.display = 'block';
         }
       });
 
       scene.addEventListener('arReady', () => status.textContent = '✔ 摄像头已开启，开始识别二维码…');
       scene.addEventListener('arError', (e) => {
-        status.textContent = '✖ AR 启动失败：' + (e?.detail || '');
+        status.textContent = '✖ AR 启动失败：' + (e && e.detail ? e.detail : '');
         startBtn.style.display = 'block';
       });
-    });
+    }
+
+    // A-Frame 会在完成初始化时触发 'aframe-loaded'
+    if (window.AFRAME) {
+      // 已加载（本地脚本几乎总能命中）
+      window.addEventListener('load', registerComponents);
+    } else {
+      // 保险：若 A-Frame 还在初始化，等事件
+      window.addEventListener('aframe-loaded', registerComponents);
+    }
   </script>
 </head>
 <body>
@@ -86,7 +88,7 @@
     <a-camera position="0 0 0" look-controls="enabled:false"></a-camera>
 
     <a-entity mindar-image-target="targetIndex: 0">
-      <a-entity id="astro" gltf-model="#astronaut" feet-on-marker rotation="-90 0 0" scale="0.02 0.02 0.02"></a-entity>
+      <a-entity gltf-model="#astronaut" feet-on-marker rotation="-90 0 0" scale="0.02 0.02 0.02"></a-entity>
     </a-entity>
   </a-scene>
 </body>
