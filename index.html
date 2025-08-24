@@ -19,7 +19,7 @@
     }
   </style>
 
-  <!-- A-Frame 官方 CDN（务必在 MindAR 之前加载） -->
+  <!-- A-Frame（必须先于 MindAR 加载） -->
   <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
   <!-- MindAR for A-Frame -->
   <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
@@ -34,7 +34,7 @@
           if (!obj) return;
           const parent = this.el.object3D;
 
-          // 暂时清零父节点旋转，避免 bbox 被旋转影响
+          // 暂清父旋转，避免 bbox 受旋转影响
           const savedRot = parent.rotation.clone();
           parent.rotation.set(0,0,0);
           parent.updateMatrixWorld(true);
@@ -57,6 +57,7 @@
       const scene = document.querySelector('a-scene');
       const startBtn = document.getElementById('enterAR');
       const status = document.getElementById('status');
+
       startBtn.addEventListener('click', async () => {
         startBtn.style.display = 'none';
         try {
@@ -66,6 +67,7 @@
           startBtn.style.display = 'block';
         }
       });
+
       scene.addEventListener('arReady', () => status.textContent = '✔ 摄像头已开启，开始识别二维码…');
       scene.addEventListener('arError', (e) => {
         status.textContent = '✖ AR 启动失败：' + (e && e.detail ? e.detail : '');
@@ -93,16 +95,16 @@
     color-space="sRGB"
     vr-mode-ui="enabled: false"
     device-orientation-permission-ui="enabled: true"
-    renderer="colorManagement: true; physicallyCorrectLights: true; antialias: true; logarithmicDepthBuffer: true"
+    renderer="alpha: true; colorManagement: true; physicallyCorrectLights: true; antialias: true; logarithmicDepthBuffer: true"
     mindar-image="
       autoStart: false;
       imageTargetSrc: ./targets.mind;
-      uiLoading: false; uiError: false; uiScanning: true;
+      uiLoading: true; uiError: true; uiScanning: true;
       filterMinCF: 0.0001; filterBeta: 0.001;
       warmupTolerance: 5; missTolerance: 5
     "
   >
-    <!-- 全局补光，避免模型发黑 -->
+    <!-- 补光 -->
     <a-entity light="type: hemisphere; intensity: 1.0; color: #ffffff; groundColor: #666666"></a-entity>
     <a-entity light="type: directional; intensity: 0.7" position="0 1 1"></a-entity>
 
@@ -113,17 +115,33 @@
     <a-camera position="0 0 0" look-controls="enabled: false"></a-camera>
 
     <!-- targetIndex=0 对应 targets.mind 里的第一个图像（你的二维码） -->
-    <a-entity mindar-image-target="targetIndex: 0">
-      <!-- 可选：调试平面，确认二维码实物尺寸（例如 0.12m x 0.12m）
-      <a-plane position="0 0 0" width="0.12" height="0.12" color="#00ff00" opacity="0.2"></a-plane>
-      -->
+    <a-entity id="marker" mindar-image-target="targetIndex: 0">
+      <!-- 调试用：看到“已锁定二维码”说明识别到了 -->
+      <a-entity id="lockLabel" text="value: 已锁定二维码; color: #0f0; align: center; width: 1.5"
+                position="0 0.08 0" visible="false"></a-entity>
+
       <a-entity id="astro"
         gltf-model="#astronaut"
         feet-on-marker
         rotation="-90 0 0"
-        scale="0.5 0.5 0.5"
+        scale="0.2 0.2 0.2"
       ></a-entity>
     </a-entity>
+
+    <script>
+      // 识别到/丢失二维码时做提示
+      const marker = document.getElementById('marker');
+      const lockLabel = document.getElementById('lockLabel');
+      const status = document.getElementById('status');
+      marker.addEventListener('targetFound', () => {
+        lockLabel.setAttribute('visible', 'true');
+        status.textContent = '✔ 识别成功：宇航员已锁定二维码';
+      });
+      marker.addEventListener('targetLost', () => {
+        lockLabel.setAttribute('visible', 'false');
+        status.textContent = '… 正在重新锁定二维码';
+      });
+    </script>
   </a-scene>
 </body>
 </html>
