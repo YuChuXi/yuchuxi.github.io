@@ -3,25 +3,36 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no" />
-  <title>QR Astronaut AR (Stable Combo)</title>
+  <title>QR Astronaut AR (Video-Overlay Fallback)</title>
 
-  <!-- 固定“稳”的版本组合（MindAR README 推荐）： -->
+  <!-- 稳定版本组合 -->
   <script src="https://cdn.jsdelivr.net/gh/hiukim/mind-ar-js@1.1.4/dist/mindar-image.prod.js"></script>
   <script src="https://aframe.io/releases/1.2.0/aframe.min.js"></script>
   <script src="https://cdn.jsdelivr.net/gh/hiukim/mind-ar-js@1.1.4/dist/mindar-image-aframe.prod.js"></script>
 
   <style>
     html,body { margin:0; height:100%; overflow:hidden; background:#000; }
+    /* 让 A-Frame 画布固定铺满，并且透明，视频能从底下透出来 */
+    a-scene, canvas.a-canvas {
+      position: fixed !important; inset: 0 !important; width: 100vw !important; height: 100vh !important;
+      z-index: 1 !important; background: transparent !important;
+    }
+    /* 给 MindAR 的 <video> 铺底（id/类名可能不同，运行时我们会在 JS 里精确设样式） */
+    .ar-video-bg {
+      position: fixed; inset: 0; width: 100vw; height: 100vh;
+      object-fit: cover; z-index: 0; background: #000;
+      transform: scaleX(-1);  /* 如需正像，把这一行删掉；保留则是“自拍镜像” */
+    }
     #hud {
       position: fixed; left: 12px; top: 12px; z-index: 9;
       padding: 6px 10px; border-radius: 10px; background:#0008; color:#fff;
-      font: 14px/1.2 system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "PingFang SC", "Microsoft YaHei", sans-serif;
+      font: 14px/1.2 system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "PingFang SC","Microsoft YaHei", sans-serif;
       user-select: none;
     }
   </style>
 
   <script>
-    // 让宇航员“脚底”落到二维码平面 (y=0)，不需要手动改模型原点
+    // 让宇航员脚底落到二维码平面 (y=0)
     AFRAME.registerComponent('feet-on-marker', {
       schema: { yoffset: {type:'number', default: 0} },
       init: function () {
@@ -32,22 +43,71 @@
           const savedRot = parent.rotation.clone();
           parent.rotation.set(0,0,0);
           parent.updateMatrixWorld(true);
-
           const box = new THREE.Box3().setFromObject(obj);
           const minY = box.min.y;
-
           parent.rotation.copy(savedRot);
           parent.updateMatrixWorld(true);
-
           this.el.object3D.position.y = this.data.yoffset - minY;
         });
       }
     });
 
+    // —— 关键修复：把相机 <video> 铺到 WebGL 画布下，强制可见 ——
+    function mountVideoUnderCanvas(sceneEl) {
+      const sys = sceneEl.systems['mindar-image-system'];
+      // MindAR 里常见是 sys.video 或 sys._video；兜底用 document.querySelector
+      const video = sys && (sys.video || sys._video) || document.querySelector('video');
+      if (!video) return;
+
+      // 确保 iOS 可播
+      video.setAttribute('playsinline', '');
+      video.setAttribute('webkit-playsinline', '');
+      video.setAttribute('muted', '');
+      video.muted = true;
+      // 铺底样式
+      video.classList.add('ar-video-bg');
+
+      // 如果 video 不在文档里，插入到 body 最前（在 canvas 之下）
+      if (!video.isConnected) {
+        document.body.prepend(video);
+      } else {
+        // 已在文档里也强制样式
+        Object.assign(video.style, {
+          position: 'fixed', inset: '0', width: '100vw', height: '100vh',
+          objectFit: 'cover', zIndex: '0', background: '#000'
+        });
+      }
+
+      // 让 WebGL 画布透明（不挡住底部视频）
+      try {
+        const renderer = sceneEl.renderer;
+        if (renderer) {
+          renderer.setClearAlpha(0); // 透明清屏
+          // 兼容某些环境
+          if (renderer.getContextAttributes && !renderer.getContextAttributes().alpha) {
+            sceneEl.setAttribute('renderer', 'alpha: true');
+          }
+        }
+      } catch (_) {}
+
+      // 保险：反复确认一次（某些浏览器会在全屏/旋转后重置布局）
+      setTimeout(() => mountVideoUnderCanvas(sceneEl), 1000);
+    }
+
     document.addEventListener('DOMContentLoaded', () => {
+      const scene = document.querySelector('a-scene');
       const marker = document.getElementById('marker');
       const status = document.getElementById('status');
-      marker.addEventListener('targetFound',  () => status.textContent = '✔ 识别成功：已锁定二维码');
+
+      // MindAR 初始化好后挂载视频
+      scene.addEventListener('arReady', () => {
+        status.textContent = '✔ 摄像头已启动，开始识别二维码…';
+        mountVideoUnderCanvas(scene);
+      });
+      scene.addEventListener('arError', (e) => {
+        status.textContent = '✖ AR 启动失败：' + (e && e.detail ? e.detail : '');
+      });
+      marker.addEventListener('targetFound',  () => status.textContent = '✔ 识别成功：宇航员已锁定二维码');
       marker.addEventListener('targetLost',   () => status.textContent = '… 正在重新锁定二维码');
     });
   </script>
@@ -56,36 +116,30 @@
 <body>
   <div id="hud"><span id="status">启动中/等待识别…</span></div>
 
-  <!-- 关键：不要加 renderer="alpha:true"。让 mind-ar 把相机视频设为 Three 场景背景 -->
+  <!-- 同目录放：index.html / yuhangyuan.glb / targets.mind（由 qr-marker.png 编译） -->
   <a-scene
-    mindar-image="imageTargetSrc: ./targets.mind;"
+    mindar-image="imageTargetSrc: ./targets.mind; autoStart: true;"
     color-space="sRGB"
-    renderer="colorManagement: true; physicallyCorrectLights: true"
+    renderer="colorManagement: true; physicallyCorrectLights: true; antialias: true"
     vr-mode-ui="enabled: false"
     device-orientation-permission-ui="enabled: true"
   >
-    <!-- 资产 -->
     <a-assets timeout="30000">
       <a-asset-item id="astronaut" src="./yuhangyuan.glb"></a-asset-item>
     </a-assets>
 
-    <!-- 相机（由 MindAR 接管位姿） -->
     <a-camera position="0 0 0" look-controls="enabled: false"></a-camera>
 
-    <!-- 识别到 targets.mind 的第 0 个目标（你的二维码）后，实体可见 -->
     <a-entity id="marker" mindar-image-target="targetIndex: 0">
-      <!-- 调试平面：需要时解注释，设成二维码实物尺寸（米）
-      <a-plane position="0 0 0" width="0.12" height="0.12" color="#00ff00" opacity="0.2"></a-plane>
-      -->
       <a-entity id="astro"
         gltf-model="#astronaut"
         feet-on-marker
-        rotation="-90 0 0"
+        rotation="90 0 0"
         scale="0.2 0.2 0.2"
       ></a-entity>
     </a-entity>
 
-    <!-- 简单补光，避免模型太暗 -->
+    <!-- 简单补光 -->
     <a-entity light="type: hemisphere; intensity: 1.0; color: #ffffff; groundColor: #666666"></a-entity>
     <a-entity light="type: directional; intensity: 0.7" position="0 1 1"></a-entity>
   </a-scene>
