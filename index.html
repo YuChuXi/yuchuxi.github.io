@@ -80,8 +80,8 @@
     });
 
     // 常见 Y-up：绕 X 轴 -90° 让人直立在平面上
-    astro.rotation.set(-Math.PI/2, 0, 0);
-    astro.scale.setScalar(0.02);
+    astro.rotation.set(Math.PI/2, 0, 0);
+    astro.scale.setScalar(0.5);
 
     // —— 脚底贴到二维码平面（y=0） ——
     {
@@ -98,7 +98,7 @@
     smooth.add(astro);
 
     // 抖动平滑
-    const lerp = 0.22, slerp = 0.22;
+    const lerp = 0.5, slerp = 0.5;
     const tmpP = new THREE.Vector3(), tmpQ = new THREE.Quaternion(), tmpS = new THREE.Vector3(), tmpM = new THREE.Matrix4();
 
     anchor.onTargetFound = ()=>{ hud.textContent = '✔ 已锁定二维码（平滑中）'; smooth.visible = true; };
