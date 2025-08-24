@@ -1,42 +1,11 @@
 <!doctype html>
 <html lang="zh-CN">
-
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
   <title>AR：宇航员粘在二维码上</title>
-  <style>
-    html,
-    body {
-      margin: 0;
-      height: 100%;
-      background: #000;
-      overflow: hidden;
-    }
 
-    #enter {
-      position: fixed;
-      left: 50%;
-      bottom: 24px;
-      transform: translateX(-50%);
-      padding: 12px 18px;
-      border: 0;
-      border-radius: 999px;
-      background: #8892ff;
-      color: #111;
-      font-weight: 700;
-    }
-
-    #hint {
-      position: fixed;
-      left: 12px;
-      right: 12px;
-      bottom: 72px;
-      color: #9ad;
-      font: 14px/1.5 system-ui;
-      text-shadow: 0 1px 2px #000;
-    }
-  </style>
+  <!-- 映射裸导入 "three"（务必在 module 脚本之前） -->
   <script type="importmap">
   {
     "imports": {
@@ -45,83 +14,139 @@
     }
   }
   </script>
-</head>
 
+  <style>
+    /* 基础：强制全屏 & 禁止滚动 */
+    html, body {
+      margin: 0; padding: 0;
+      width: 100vw; height: 100dvh;   /* dvh 更靠谱；浏览器工具栏变化不影响 */
+      overflow: hidden;
+      background: #000;
+      overscroll-behavior: none;
+      touch-action: none;
+    }
+    /* AR 容器：固定全屏，不参与文档流 */
+    #ar {
+      position: fixed;
+      inset: 0;            /* top:0;right:0;bottom:0;left:0 */
+      width: 100vw;
+      height: 100dvh;
+      overflow: hidden;
+      background: #000;
+    }
+    /* MindAR 注入的 video/canvas/overlay 全部铺满容器 */
+    #ar video, #ar canvas, #ar .mindar-ui-overlay, #ar .mindar-ui-scanning {
+      position: absolute !important;
+      inset: 0 !important;
+      width: 100% !important;
+      height: 100% !important;
+      max-width: 100% !important;
+      max-height: 100% !important;
+      display: block !important;
+      object-fit: cover;
+      overflow: hidden;
+    }
+
+    /* 控件置顶 */
+    #enter {
+      position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
+      z-index: 9999;
+      padding: 12px 18px; border: 0; border-radius: 999px;
+      background: #8892ff; color: #111; font-weight: 700;
+      pointer-events: auto;
+    }
+    #hint {
+      position: fixed; left: 12px; right: 12px; bottom: 72px;
+      z-index: 9999; color: #9ad; font: 14px/1.5 system-ui; text-shadow: 0 1px 2px #000;
+      pointer-events: none;
+    }
+  </style>
+</head>
 <body>
+  <div id="ar"></div>
   <button id="enter">进入 AR</button>
   <div id="hint">允许相机后，对准你桌上/墙上的二维码。</div>
 
   <script type="module">
-    // Three.js（ESM）
     import * as THREE from 'three';
     import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-    // 注意：mindar 用的是 ESM 包装
+    // 用 esm.run 把 UMD 包装为 ESM；若网络不通可换 esm.sh（见下）
     import * as mindar from 'https://esm.run/mind-ar@1.2.5/dist/mindar-image-three.prod.js';
+    // 备选：import * as mindar from 'https://esm.sh/mind-ar@1.2.5/dist/mindar-image-three.prod.js';
     const { MindARThree } = mindar;
 
-    const MODEL_URL = 'yuhangyuan.glb';
-    const TARGET_URL = 'qr-target.mind';
+    const MODEL_URL   = 'yuhangyuan.glb';
+    const TARGET_URL  = 'qr-target.mind';
     const MODEL_SCALE = 0.05;
     const EPSILON_LIFT = 0.002;
-    // MindAR 中目标平面法线沿 Z 轴；若脚朝向反了，改成 'negZ'
-    const ALIGN_TO = 'posZ'; // 'posZ' | 'negZ'
+    const ALIGN_TO = 'posZ'; // 'posZ' | 'negZ' —— 若脚朝向反了改成 'negZ'
 
-    const enterBtn = document.getElementById('enter');
-    const hint = (t) => { document.getElementById('hint').textContent = t || ''; };
+    const $ = (s)=>document.querySelector(s);
+    const container = $('#ar');
+    const enterBtn = $('#enter');
+    const hint = (t)=>{ $('#hint').textContent = t || ''; };
 
     let started = false;
+
     enterBtn.addEventListener('click', async () => {
       if (started) return; started = true; enterBtn.style.display = 'none';
       hint('正在启动相机…');
 
       try {
-        // 1) 初始化 MindARThree（纯网页图像跟踪）
+        // 1) MindAR 绑定到 #ar 容器
         const mindarThree = new MindARThree({
-          container: document.body,
+          container,
           imageTargetSrc: TARGET_URL,
           maxTrack: 1,
           uiLoading: 'no', uiScanning: 'no', uiError: 'yes'
         });
         const { renderer, scene, camera } = mindarThree;
 
-        // 2) 光照
+        // 2) Three 光照
         scene.add(new THREE.HemisphereLight(0xffffff, 0x444466, 0.7));
         const dir = new THREE.DirectionalLight(0xffffff, 0.8);
-        dir.position.set(1, 2, 1);
-        scene.add(dir);
+        dir.position.set(1,2,1); scene.add(dir);
 
-        // 3) 锚点（.mind 的第 0 个目标即二维码）
+        // 3) 锚点（.mind 的第 0 个目标）
         const anchor = mindarThree.addAnchor(0);
 
         // 4) peg：把模型本地 +Y 轴旋到“目标法线（Z 轴）”
         const peg = new THREE.Group();
         anchor.group.add(peg);
         {
-          const from = new THREE.Vector3(0, 1, 0);
-          const to = (ALIGN_TO === 'negZ') ? new THREE.Vector3(0, 0, -1) : new THREE.Vector3(0, 0, 1);
+          const from = new THREE.Vector3(0,1,0);
+          const to   = (ALIGN_TO === 'negZ') ? new THREE.Vector3(0,0,-1) : new THREE.Vector3(0,0,1);
           peg.quaternion.copy(new THREE.Quaternion().setFromUnitVectors(from, to));
         }
 
-        // 5) 载入模型，脚底贴到二维码平面（y=0）
+        // 5) 载入模型并让“脚底”贴合二维码平面（y=0）
         const loader = new GLTFLoader();
-        loader.load(MODEL_URL, (gltf) => {
+        loader.load(MODEL_URL, (gltf)=>{
           const model = gltf.scene;
-          model.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+          model.traverse(o => { if (o.isMesh){ o.castShadow = true; o.receiveShadow = true; }});
           model.scale.setScalar(MODEL_SCALE);
 
           const box = new THREE.Box3().setFromObject(model);
           const footYOffset = -box.min.y + EPSILON_LIFT; // 脚底抬到 y=0（加 2mm 防穿插）
           model.position.set(0, footYOffset, 0);
-
           peg.add(model);
-          hint('对准二维码：宇航员会用“脚”粘在二维码平面上（不管躺着还是竖着）。');
-        }, undefined, (err) => { console.warn(err); hint('模型加载失败'); });
 
-        // 6) 启动
+          hint('对准二维码：宇航员会用“脚”粘在二维码平面上（不管躺着还是竖着）。');
+        }, undefined, (err)=>{ console.warn(err); hint('模型加载失败'); });
+
+        // 6) 启动 MindAR & 让 Three 按容器尺寸渲染
         await mindarThree.start();
-        renderer.setSize(window.innerWidth, window.innerHeight);
-        renderer.setAnimationLoop(() => { renderer.render(scene, camera); });
-        window.addEventListener('resize', () => renderer.setSize(window.innerWidth, window.innerHeight));
+
+        function sizeToContainer() {
+          const w = container.clientWidth;
+          const h = container.clientHeight;
+          renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+          renderer.setSize(w, h, false);   // false：不改 canvas 样式宽高
+        }
+        sizeToContainer();
+        window.addEventListener('resize', sizeToContainer);
+
+        renderer.setAnimationLoop(()=>{ renderer.render(scene, camera); });
       } catch (e) {
         console.error(e);
         hint('启动失败：' + (e?.message || e));
@@ -130,5 +155,4 @@
     });
   </script>
 </body>
-
 </html>
