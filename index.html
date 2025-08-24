@@ -6,12 +6,13 @@
         content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
   <title>AR：宇航员粘在二维码上</title>
 
-  <!-- 把裸导入 "three" 映射到 ESM（务必在 module 脚本之前） -->
+  <!-- 关键：用 importmap 明确 three 与 mindar 的 ES 模块（官方推荐写法） -->
   <script type="importmap">
   {
     "imports": {
-      "three": "https://cdn.jsdelivr.net/npm/three@0.152.2/build/three.module.js",
-      "three/examples/jsm/": "https://cdn.jsdelivr.net/npm/three@0.152.2/examples/jsm/"
+      "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/",
+      "mindar-image-three": "https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-three.prod.js"
     }
   }
   </script>
@@ -63,11 +64,8 @@
 
   <script type="module">
     import * as THREE from 'three';
-    import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-    // 用 esm.sh 将 UMD 包装为 ES Module（若网络不通可改回 esm.run）
-    import * as mindar from 'https://esm.sh/mind-ar@1.2.5/dist/mindar-image-three.prod.js';
-    // 备选：import * as mindar from 'https://esm.run/mind-ar@1.2.5/dist/mindar-image-three.prod.js';
-    const { MindARThree } = mindar;
+    import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+    import { MindARThree } from 'mindar-image-three'; // ✅ 不再用 esm.sh/esm.run
 
     // -------- 资源与参数 --------
     const MODEL_URL     = 'yuhangyuan.glb';  // 宇航员
@@ -137,7 +135,7 @@
         const loader = new GLTFLoader();
         loader.load(MODEL_URL, (gltf)=>{
           const model = gltf.scene;
-          // 若更追求帧率，可把阴影关掉
+          // 若更追求帧率，可把阴影关掉（已默认关）
           model.traverse(o => { if (o.isMesh){ o.castShadow = false; o.receiveShadow = false; }});
           model.scale.setScalar(MODEL_SCALE);
 
