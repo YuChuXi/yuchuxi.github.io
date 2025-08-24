@@ -3,9 +3,9 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no" />
-<title>MindAR + Three | Astronaut on QR</title>
+<title>MindAR + Three | 稳定回捕（直挂锚点版）</title>
 
-<!-- 官方推荐：ESM + importmap；MindAR v1.2.x ESM & Three r160 -->
+<!-- MindAR v1.2.5 + Three r160 -->
 <script type="importmap">
 {
   "imports": {
@@ -17,17 +17,21 @@
 </script>
 
 <style>
-  html,body { margin:0; height:100%; overflow:hidden; background:#000; }
-  #ar { position: fixed; inset: 0; overflow: hidden; }
-  /* MindAR 会把 <video> 放进容器；铺满底层（如需镜像，把 transform 改为 scaleX(-1)） */
-  #ar video {
-    position:absolute; inset:0; width:100%; height:100%;
-    object-fit:cover; transform:none; z-index:0; background:#000; pointer-events:none;
-  }
-  canvas { position:absolute; inset:0; z-index:1; }
-  #hud { position:fixed; left:12px; top:12px; z-index:5; color:#fff; background:#0008; border-radius:10px; padding:6px 10px; font:14px/1.2 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,"PingFang SC","Microsoft YaHei",sans-serif; }
-  #start { position:fixed; left:50%; top:50%; transform:translate(-50%,-50%); z-index:6; padding:12px 18px; border:0; border-radius:999px; font-weight:700; background:#aafc; color:#111; cursor:pointer; }
-  #start:active { transform:translate(-50%,-50%) scale(0.98); }
+  html,body{margin:0;height:100%;overflow:hidden;background:#000;}
+  #ar{position:fixed;inset:0;overflow:hidden;}
+  #ar video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;transform:none;z-index:0;background:#000;pointer-events:none;}
+  canvas{position:absolute;inset:0;z-index:1;}
+  #hud{position:fixed;left:12px;top:12px;z-index:5;color:#fff;background:#000a;border-radius:10px;padding:6px 10px;font:14px/1.2 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,"PingFang SC","Microsoft YaHei",sans-serif;}
+  #start{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);z-index:6;padding:12px 18px;border:0;border-radius:999px;font-weight:700;background:#aafc;color:#111;cursor:pointer;}
+  #start:active{transform:translate(-50%,-50%) scale(0.98);}
+
+  /* 迷你调试面板（已修复 dump 点击报错） */
+  #dbg{position:fixed;left:12px;bottom:12px;z-index:7;width:min(520px,92vw);max-height:56vh;display:grid;grid-template-columns:1fr;gap:8px;font:12px/1.35 ui-monospace,Consolas,Menlo,monospace;color:#def;}
+  #dbg .row{background:#00131bde;border:1px solid #0a2a36;border-radius:8px;padding:8px;overflow:auto}
+  #dbg .kv{display:grid;grid-template-columns:auto 1fr;gap:4px 10px}
+  #dbg .kv .k{color:#9bd}
+  #dbg .kv .v{color:#fff}
+  #log{white-space:pre-wrap}
 </style>
 </head>
 <body>
@@ -35,162 +39,141 @@
   <div id="hud">等待启动…</div>
   <button id="start">进入 AR</button>
 
-  <script type="module">
-    import * as THREE from 'three';
-    import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-    import { MindARThree } from 'mindar-image-three';
+  <div id="dbg">
+    <div class="row">
+      <div class="kv" id="stat"></div>
+    </div>
+    <div class="row" id="log"></div>
+  </div>
 
-    const container = document.querySelector('#ar');
-    const hud = document.querySelector('#hud');
-    const btn = document.querySelector('#start');
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { MindARThree } from 'mindar-image-three';
 
-    // MindAR 初始化（v1.2.x 起使用 ESM）
-    const mindarThree = new MindARThree({
-      container,
-      imageTargetSrc: './targets.mind',
-      uiLoading: true, uiScanning: true, uiError: true
-    });
+const container = document.querySelector('#ar');
+const hud = document.querySelector('#hud');
+const btn = document.querySelector('#start');
+const $ = s=>document.querySelector(s);
 
-    const { renderer, scene, camera } = mindarThree;
-    renderer.setClearColor(0x000000, 0);  // WebGL 背景透明，视频能透出来
-    renderer.outputColorSpace = THREE.SRGBColorSpace; // Three r160 正确的颜色空间设置
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+/* 轻量日志 */
+const logBox = $('#log'); const logs=[]; const MAX_LOG=400; const t0=performance.now();
+const tms=()=> (performance.now()-t0).toFixed(0)+'ms';
+function log(...a){ const line='['+tms()+'] '+a.join(' '); console.log(line); logs.push(line); if(logs.length>MAX_LOG) logs.shift(); logBox.textContent=logs.join('\n'); }
 
-    // 灯光
-    scene.add(new THREE.HemisphereLight(0xffffff, 0x666666, 1.0));
-    const dir = new THREE.DirectionalLight(0xffffff, 0.9);
-    dir.position.set(0,1,1);
-    scene.add(dir);
+/* MindAR 初始化（直挂锚点；开启滤波） */
+const mindarThree = new MindARThree({
+  container,
+  imageTargetSrc: './targets.mind',
+  uiLoading: true, uiScanning: true, uiError: true,
+  // 让回捕更积极，抖动更小（可按现场再微调）
+  filterMinCF: 0.0001,
+  filterBeta: 0.0005,
+  warmupTolerance: 3,
+  missTolerance: 3,
+});
+const { renderer, scene, camera } = mindarThree;
+renderer.setClearColor(0x000000, 0);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 
-    // 为第 0 个图像目标创建锚点（✅ 正确 API）
-    const anchor = mindarThree.addAnchor(0);
+/* 灯光 */
+scene.add(new THREE.HemisphereLight(0xffffff, 0x666666, 1.0));
+const dir = new THREE.DirectionalLight(0xffffff, 0.9); dir.position.set(0,1,1); scene.add(dir);
 
-    // 平滑用的“代理 Group”，不直接把模型挂在 anchor.group 下
-    const smooth = new THREE.Group();
-    smooth.visible = false;
-    scene.add(smooth);
+/* 锚点与模型（直挂锚点） */
+const anchor = mindarThree.addAnchor(0);
+const gltf = await new GLTFLoader().loadAsync('./yuhangyuan.glb');
+const astro = gltf.scene;
 
-    // 载入宇航员
-    const gltf = await new GLTFLoader().loadAsync('./yuhangyuan.glb');
-    const astro = gltf.scene;
-
-    // 强制所有材质不透明，避免相机画面高亮造成的“半透明错觉”
-    astro.traverse(n=>{
-      if (n.isMesh && n.material){
-        const mats = Array.isArray(n.material) ? n.material : [n.material];
-        mats.forEach(m=>{
-          m.transparent = false; m.opacity = 1;
-          m.depthWrite = true; m.depthTest = true; m.alphaTest = 0;
-          m.blending = THREE.NormalBlending; m.side = THREE.FrontSide;
-          m.needsUpdate = true;
-        });
-      }
-    });
-
-    // glTF 多为 Y-up；MindAR 平面在 XY；把模型绕 X 轴 -90° 立到平面上
-    astro.rotation.set(Math.PI/2, 0, 0);
-    astro.scale.setScalar(0.5);
-
-    // 让“脚底”落在二维码平面（y=0）
-    {
-      const parent = new THREE.Group();
-      parent.add(astro);
-      const savedRot = astro.rotation.clone();
-      astro.rotation.set(0,0,0);
-      parent.updateMatrixWorld(true);
-      const box = new THREE.Box3().setFromObject(astro);
-      const minY = box.min.y;
-      astro.rotation.copy(savedRot);
-      astro.position.y -= minY;
+// 材质 & 视锥裁剪
+astro.traverse(n=>{
+  if(n.isMesh){
+    n.frustumCulled = false;
+    if(n.material){
+      (Array.isArray(n.material)?n.material:[n.material]).forEach(m=>{
+        m.transparent=false; m.opacity=1;
+        m.depthWrite=true; m.depthTest=true; m.alphaTest=0;
+        m.blending=THREE.NormalBlending; m.side=THREE.FrontSide; m.needsUpdate=true;
+      });
     }
+  }
+});
 
-    smooth.add(astro);
+// 立起来 + 脚贴平面
+astro.rotation.set(Math.PI/2, 0, 0);
+astro.scale.setScalar(0.5);
+{
+  const tmpParent=new THREE.Group(); tmpParent.add(astro);
+  const keep=astro.rotation.clone();
+  astro.rotation.set(0,0,0);
+  tmpParent.updateMatrixWorld(true);
+  const box=new THREE.Box3().setFromObject(astro);
+  astro.rotation.copy(keep);
+  astro.position.y -= box.min.y;
+}
 
-    // 抖动平滑参数
-    let lerp = 0.5, slerp = 0.5;
+// 直接挂到锚点（关键！）
+anchor.group.add(astro);
 
-    // 复用的临时对象
-    const tmpP = new THREE.Vector3();
-    const tmpQ = new THREE.Quaternion();
-    const tmpS = new THREE.Vector3();
-    const tmpM = new THREE.Matrix4();
+/* 状态 */
+let foundCnt=0, lostCnt=0, frame=0, fps=0; let _c=0,_t=performance.now();
+anchor.onTargetFound = ()=>{ foundCnt++; hud.textContent='✔ 已锁定二维码'; log('EVENT onTargetFound', 'foundCnt='+foundCnt); astro.visible=true; };
+anchor.onTargetLost  = ()=>{ lostCnt++;  hud.textContent='… 重新锁定中'; log('EVENT onTargetLost',  'lostCnt='+lostCnt);  astro.visible=false; };
 
-    // —— 回捕修复：第一帧硬贴合，其余帧再平滑 ——
-    let justFound = false;
+/* 面板 */
+const statBox=$('#stat');
+function fmtV(v){ return `(${v.x.toFixed(3)}, ${v.y.toFixed(3)}, ${v.z.toFixed(3)})`; }
+function fmtQ(q){ const e=new THREE.Euler().setFromQuaternion(q,'XYZ'); return `(${THREE.MathUtils.radToDeg(e.x).toFixed(1)}°, ${THREE.MathUtils.radToDeg(e.y).toFixed(1)}°, ${THREE.MathUtils.radToDeg(e.z).toFixed(1)}°)`; }
+const tmpP=new THREE.Vector3(), tmpQ=new THREE.Quaternion(), tmpS=new THREE.Vector3(), tmpM=new THREE.Matrix4();
+function renderPanel(){
+  anchor.group.updateMatrixWorld();
+  tmpM.copy(anchor.group.matrixWorld).decompose(tmpP,tmpQ,tmpS);
+  const kv = [
+    ['frame', frame], ['fps', fps.toFixed(1)],
+    ['anchor.visible', anchor.group.visible],
+    ['astro.visible', astro.visible],
+    ['foundCnt', foundCnt], ['lostCnt', lostCnt],
+    ['anchor.pos', fmtV(tmpP)], ['anchor.rot(Euler°)', fmtQ(tmpQ)], ['anchor.scale', fmtV(tmpS)]
+  ];
+  statBox.innerHTML = kv.map(([k,v])=>`<div class="k">${k}</div><div class="v">${v}</div>`).join('');
+}
 
-    anchor.onTargetFound = ()=>{
-      hud.textContent = '✔ 已锁定二维码（平滑中）';
-      justFound = true; // 标记回捕第一帧
+/* 启动 */
+btn.addEventListener('click', async ()=>{
+  btn.style.display='none';
+  try{
+    await mindarThree.start();
+    hud.textContent='✔ 相机已开启，开始识别二维码…';
+    log('START camera ok');
+
+    // 相机裁剪面放宽，避免“太近/太远被裁掉”
+    camera.near=0.01; camera.far=5000; camera.updateProjectionMatrix();
+
+    // 确保 <video> 铺底
+    const ensureVideo = ()=>{
+      const v=container.querySelector('video'); if(!v) return;
+      v.setAttribute('playsinline',''); v.setAttribute('webkit-playsinline','');
+      v.setAttribute('muted',''); v.muted=true;
+      Object.assign(v.style,{position:'absolute',inset:'0',width:'100%',height:'100%',objectFit:'cover',zIndex:'0',background:'#000',transform:'none'});
     };
-    anchor.onTargetLost = ()=>{
-      hud.textContent = '… 重新锁定中';
-      // 不在这里改 smooth.visible，交给每帧逻辑统一处理
-    };
+    ensureVideo(); new MutationObserver(ensureVideo).observe(container,{childList:true,subtree:true});
 
-    // 启动（iOS 需要手势）
-    btn.addEventListener('click', async ()=>{
-      btn.style.display = 'none';
-      try{
-        await mindarThree.start();
-        hud.textContent = '✔ 相机已开启，开始识别二维码…';
-
-        // 确保 <video> 铺底（有些机型会重建节点，用 observer 兜底）
-        const ensureVideo = ()=>{
-          const v = container.querySelector('video');
-          if (!v) return;
-          v.setAttribute('playsinline',''); v.setAttribute('webkit-playsinline','');
-          v.setAttribute('muted',''); v.muted = true;
-          Object.assign(v.style, {
-            position:'absolute', inset:'0', width:'100%', height:'100%',
-            objectFit:'cover', zIndex:'0', background:'#000', transform:'none'
-          });
-        };
-        ensureVideo();
-        new MutationObserver(ensureVideo).observe(container, {childList:true, subtree:true});
-
-        // 渲染循环（跟随锚点可见性；回捕第一帧硬贴合）
-        renderer.setAnimationLoop(()=>{
-          // 取锚点世界位姿
-          anchor.group.updateMatrixWorld();
-          const nowVisible = anchor.group.visible;
-
-          // 若 SDK 未触发回调但可见性从 false→true，补一次 justFound
-          if (nowVisible && !smooth.visible) justFound = true;
-
-          // 显隐完全跟随锚点
-          smooth.visible = nowVisible;
-
-          // 目标位姿
-          tmpM.copy(anchor.group.matrixWorld).decompose(tmpP, tmpQ, tmpS);
-
-          if (nowVisible){
-            if (justFound){
-              // 回捕第一帧：直接贴到锚点，避免从很远旧姿态 lerp 导致“看不见”
-              smooth.position.copy(tmpP);
-              smooth.quaternion.copy(tmpQ);
-              smooth.scale.copy(tmpS);
-              justFound = false;
-            }else{
-              // 正常平滑
-              smooth.position.lerp(tmpP,  lerp);
-              smooth.quaternion.slerp(tmpQ, slerp);
-              smooth.scale.lerp(tmpS,      lerp);
-            }
-          }
-
-          renderer.render(scene, camera);
-        });
-
-        // 可选：窗口尺寸变化时尽量让 WebGL 也跟着缩放
-        window.addEventListener('resize', ()=>{
-          renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-        });
-
-      }catch(e){
-        hud.textContent = '✖ 无法开启相机：' + (e?.message || e);
-        btn.style.display = 'block';
-      }
+    // 渲染循环
+    renderer.setAnimationLoop(()=>{
+      frame++; _c++; const now=performance.now(); if(now-_t>=1000){ fps=_c*1000/(now-_t); _c=0; _t=now; }
+      renderer.render(scene, camera);
+      renderPanel();
     });
-  </script>
+
+  }catch(e){
+    const msg=(e&& (e.message||e.toString()))||String(e);
+    hud.textContent='✖ 无法开启相机：'+msg; log('ERROR', msg);
+    btn.style.display='block';
+  }
+});
+
+hud.textContent='点击“进入 AR”并对准目标图';
+</script>
 </body>
 </html>
