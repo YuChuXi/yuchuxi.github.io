@@ -55,8 +55,8 @@ const mindarThree = new MindARThree({
   container,
   imageTargetSrc: './targets.mind',
   uiLoading: true, uiScanning: true, uiError: true,
-  filterMinCF: 0.1,
-  filterBeta: 0.5,
+  filterMinCF: 0.001,
+  filterBeta: 0.01,
 });
 const { renderer, scene, camera } = mindarThree;
 renderer.setClearColor(0x000000, 0);
