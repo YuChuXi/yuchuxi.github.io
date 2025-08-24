@@ -1,230 +1,168 @@
 <!doctype html>
 <html lang="zh-CN">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
-  <title>AR：宇航员粘在二维码上（UMD 稳定版）</title>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+<title>AR：宇航员粘在二维码上（UMD 稳定版 v1.1.5）</title>
 
-  <!-- 纯 UMD：不使用 import / module，避免一切模块兼容问题 -->
-  <!-- three 选用 r0.149（最后一个长期稳定的 UMD 版本） -->
-  <script src="https://unpkg.com/three@0.149.0/build/three.min.js"></script>
-  <script src="https://unpkg.com/three@0.149.0/examples/js/loaders/GLTFLoader.js"></script>
-  <!-- MindAR UMD（自动挂在 window.MINDAR） -->
-  <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-three.prod.js"></script>
+<!-- 选用与 MindAR v1.1.x 匹配的 three r132 UMD 构建，避免模块冲突 -->
+<script src="https://unpkg.com/three@0.132.2/build/three.min.js"></script>
+<script src="https://unpkg.com/three@0.132.2/examples/js/loaders/GLTFLoader.js"></script>
 
-  <style>
-    html, body {
-      margin: 0; padding: 0;
-      width: 100vw; height: 100dvh;
-      overflow: hidden; background: #000;
-      overscroll-behavior: none; touch-action: none;
-    }
-    #ar {
-      position: fixed; inset: 0; width: 100vw; height: 100dvh;
-      background: #000; overflow: hidden;
-    }
-    /* MindAR 注入的 video/canvas/overlay 铺满容器 */
-    #ar video, #ar canvas, #ar .mindar-ui-overlay, #ar .mindar-ui-scanning {
-      position: absolute !important; inset: 0 !important;
-      width: 100% !important; height: 100% !important;
-      max-width: 100% !important; max-height: 100% !important;
-      display: block !important; object-fit: cover; overflow: hidden;
-    }
-    #enter {
-      position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
-      z-index: 9999; padding: 12px 18px; border: 0; border-radius: 999px;
-      background: #8892ff; color: #111; font-weight: 700;
-    }
-    #hint {
-      position: fixed; left: 12px; right: 12px; bottom: 72px; z-index: 9999;
-      color: #9ad; font: 14px/1.5 system-ui; text-shadow: 0 1px 2px #000; pointer-events: none;
-    }
-  </style>
+<!-- MindAR v1.1.5 的 UMD 版本（非 ESM，不会触发 import 报错） -->
+<script src="https://cdn.jsdelivr.net/npm/mind-ar@1.1.5/dist/mindar-image-three.prod.js"></script>
+
+<style>
+  html, body { margin:0; padding:0; width:100vw; height:100dvh; overflow:hidden; background:#000;
+               overscroll-behavior:none; touch-action:none; }
+  #ar { position:fixed; inset:0; width:100vw; height:100dvh; background:#000; overflow:hidden; }
+  /* MindAR 注入的 video/canvas/overlay 铺满容器 */
+  #ar video, #ar canvas, #ar .mindar-ui-overlay, #ar .mindar-ui-scanning {
+    position:absolute !important; inset:0 !important; width:100% !important; height:100% !important;
+    max-width:100% !important; max-height:100% !important; display:block !important; object-fit:cover;
+  }
+  #enter { position:fixed; left:50%; bottom:24px; transform:translateX(-50%); z-index:9999;
+           padding:12px 18px; border:0; border-radius:999px; background:#8892ff; color:#111; font-weight:700; }
+  #hint { position:fixed; left:12px; right:12px; bottom:72px; z-index:9999; color:#9ad; font:14px/1.5 system-ui;
+          text-shadow:0 1px 2px #000; pointer-events:none; }
+</style>
 </head>
 <body>
   <div id="ar"></div>
   <button id="enter">进入 AR</button>
   <div id="hint">允许相机后，对准你桌上/墙上的二维码。</div>
 
-  <!-- 纯 UMD 脚本（无 import） -->
-  <script>
-    // ===== 配置 =====
-    const MODEL_URL    = 'yuhangyuan.glb';
-    const TARGET_URL   = 'qr-target.mind';
-    const MODEL_SCALE  = 0.05;
-    const EPSILON_LIFT = 0.002;     // 脚底上抬 2mm 防穿插
-    const ALIGN_TO     = 'posZ';    // MindAR 目标法线沿 Z；反了改 'negZ'
+<script>
+  // —— 资源与参数 ——
+  const MODEL_URL    = 'yuhangyuan.glb';
+  const TARGET_URL   = 'qr-target.mind';
+  const MODEL_SCALE  = 0.5;
+  const EPSILON_LIFT = 0.002;   // 脚底抬 2mm 防穿插
+  const ALIGN_TO     = 'posZ';  // MindAR 目标法线沿 Z；反了改 'negZ'
 
-    // MindAR 内置滤波（更偏“跟手”，抖动由我们在下游平滑）
-    const MINDAR_FILTER_MINCF = 0.002;
-    const MINDAR_FILTER_BETA  = 0.08;
-    const WARMUP_TOLERANCE    = 2;
-    const MISS_TOLERANCE      = 10;
+  // MindAR 内置滤波（偏跟手；抖动我们用下游轻平滑处理）
+  const MINDAR_FILTER_MINCF = 0.002;
+  const MINDAR_FILTER_BETA  = 0.08;
+  const WARMUP_TOLERANCE    = 2;
+  const MISS_TOLERANCE      = 10;
 
-    // 我们的“二次平滑 + 短期预测”参数
-    const HOLD_LOST_MS        = 250;       // 丢失后延迟隐藏（去闪烁）
-    const PREDICT_HORIZON_MS  = 40;        // 预测时间窗（降低延迟的关键）
-    const MAX_POS_VEL         = 0.8;       // 位置速度上限 m/s（防外推过头）
-    const MAX_ANG_VEL         = 3.0;       // 角速度上限 rad/s（约 172°/s）
+  // 我们的二次平滑（越大越跟手）
+  const ALPHA_POS = 0.45;
+  const ALPHA_ROT = 0.55;
+  const ALPHA_SCL = 0.50;
 
-    // 平滑（越大越跟手）
-    const ALPHA_POS = 0.55;
-    const ALPHA_ROT = 0.60;
-    const ALPHA_SCL = 0.55;
+  // 丢失缓冲，去闪烁
+  const HOLD_LOST_MS = 250;
 
-    // ===== DOM =====
-    const $ = s => document.querySelector(s);
-    const container = $('#ar');
-    const enterBtn  = $('#enter');
-    const hintEl    = $('#hint');
-    const hint = t => hintEl.textContent = t || '';
+  const $ = s => document.querySelector(s);
+  const container = $('#ar');
+  const enterBtn  = $('#enter');
+  const hintEl    = $('#hint');
+  const hint = t => hintEl.textContent = t || '';
 
-    // ===== 主流程 =====
-    let started = false;
-    enterBtn.addEventListener('click', async () => {
-      if (started) return; started = true; enterBtn.style.display = 'none';
-      hint('正在启动相机…');
+  let started = false;
+  enterBtn.addEventListener('click', async () => {
+    if (started) return; started = true; enterBtn.style.display = 'none';
+    hint('正在启动相机…');
 
-      try {
-        if (!window.MINDAR || !window.MINDAR.IMAGE) throw new Error('MindAR 未加载');
-        const MindARThree = window.MINDAR.IMAGE.MindARThree;
+    try {
+      if (!window.MINDAR || !window.MINDAR.IMAGE) throw new Error('MindAR 未加载（检查 CDN）');
+      const MindARThree = window.MINDAR.IMAGE.MindARThree;
 
-        // 1) 初始化 MindARThree
-        const mindarThree = new MindARThree({
-          container,
-          imageTargetSrc: TARGET_URL,
-          maxTrack: 1,
-          uiLoading: 'no', uiScanning: 'no', uiError: 'yes',
-          filterMinCF: MINDAR_FILTER_MINCF,
-          filterBeta:  MINDAR_FILTER_BETA,
-          warmupTolerance: WARMUP_TOLERANCE,
-          missTolerance:  MISS_TOLERANCE
-        });
-        const renderer = mindarThree.renderer;
-        const scene    = mindarThree.scene;
-        const camera   = mindarThree.camera;
+      // 1) 初始化
+      const mindarThree = new MindARThree({
+        container,
+        imageTargetSrc: TARGET_URL,
+        maxTrack: 1,
+        uiLoading: 'no', uiScanning: 'no', uiError: 'yes',
+        filterMinCF: MINDAR_FILTER_MINCF,
+        filterBeta:  MINDAR_FILTER_BETA,
+        warmupTolerance: WARMUP_TOLERANCE,
+        missTolerance:  MISS_TOLERANCE
+      });
+      const renderer = mindarThree.renderer;
+      const scene    = mindarThree.scene;
+      const camera   = mindarThree.camera;
 
-        // 2) 光照
-        scene.add(new THREE.HemisphereLight(0xffffff, 0x444466, 0.7));
-        const dir = new THREE.DirectionalLight(0xffffff, 0.8);
-        dir.position.set(1,2,1); scene.add(dir);
+      // 2) 光照
+      scene.add(new THREE.HemisphereLight(0xffffff, 0x444466, 0.7));
+      const dir = new THREE.DirectionalLight(0xffffff, 0.8);
+      dir.position.set(1,2,1); scene.add(dir);
 
-        // 3) 锚点（第 0 个目标）
-        const anchor = mindarThree.addAnchor(0);
+      // 3) 锚点（第 0 个目标）
+      const anchor = mindarThree.addAnchor(0);
 
-        // 4) 平滑容器 + “脚粘平面”的 peg（把模型 +Y 轴旋到目标 Z）
-        const smoothed = new THREE.Group();   // 渲染用
-        scene.add(smoothed);
+      // 4) 平滑容器 + “脚粘平面”的 peg（把模型 +Y 旋到目标 Z 法线）
+      const smoothed = new THREE.Group();   // 我们的轻量平滑容器
+      scene.add(smoothed);
 
-        const peg = new THREE.Group();
-        smoothed.add(peg);
-        (function alignPegToTargetNormal(){
-          const from = new THREE.Vector3(0,1,0);
-          const to   = (ALIGN_TO === 'negZ') ? new THREE.Vector3(0,0,-1) : new THREE.Vector3(0,0,1);
-          const q    = new THREE.Quaternion().setFromUnitVectors(from, to);
-          peg.quaternion.copy(q);
-        })();
+      const peg = new THREE.Group();
+      smoothed.add(peg);
+      (function alignPegToTargetNormal(){
+        const from = new THREE.Vector3(0,1,0);
+        const to   = (ALIGN_TO === 'negZ') ? new THREE.Vector3(0,0,-1) : new THREE.Vector3(0,0,1);
+        peg.quaternion.copy(new THREE.Quaternion().setFromUnitVectors(from, to));
+      })();
 
-        // 5) 防闪烁
-        let loseTimer = null, tracking = false;
-        anchor.onTargetFound = () => { tracking = true;  clearTimeout(loseTimer); smoothed.visible = true; };
-        anchor.onTargetLost  = () => { tracking = false; loseTimer = setTimeout(()=> smoothed.visible = false, HOLD_LOST_MS); };
+      // 5) 找到/丢失的可见性防抖
+      let loseTimer = null;
+      anchor.onTargetFound = () => { clearTimeout(loseTimer); smoothed.visible = true; };
+      anchor.onTargetLost  = () => { loseTimer = setTimeout(()=> smoothed.visible = false, HOLD_LOST_MS); };
 
-        // 6) 模型
-        const loader = new THREE.GLTFLoader();
-        loader.load(MODEL_URL, (gltf)=>{
-          const model = gltf.scene;
-          model.traverse(o => { if (o.isMesh){ o.castShadow = false; o.receiveShadow = false; }});
-          model.scale.setScalar(MODEL_SCALE);
-          const box = new THREE.Box3().setFromObject(model);
-          const footYOffset = -box.min.y + EPSILON_LIFT;
-          model.position.set(0, footYOffset, 0);
-          peg.add(model);
-          hint('对准二维码：宇航员会用“脚”粘在二维码平面上（不管躺着还是竖着）。');
-        }, undefined, (err)=>{ console.warn(err); hint('模型加载失败'); });
+      // 6) 模型
+      const loader = new THREE.GLTFLoader();
+      loader.load(MODEL_URL, (gltf)=>{
+        const model = gltf.scene;
+        model.traverse(o => { if (o.isMesh){ o.castShadow = false; o.receiveShadow = false; }});
+        model.scale.setScalar(MODEL_SCALE);
 
-        // 7) 启动
-        await mindarThree.start();
+        const box = new THREE.Box3().setFromObject(model);
+        const footYOffset = -box.min.y + EPSILON_LIFT; // 脚底抬到 peg 的 y=0
+        model.position.set(0, footYOffset, 0);
 
-        // 8) 尺寸
-        function sizeToContainer() {
-          const w = container.clientWidth, h = container.clientHeight;
-          renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.25)); // 更稳帧
-          renderer.setSize(w, h, false);
-        }
-        sizeToContainer();
-        window.addEventListener('resize', sizeToContainer);
+        peg.add(model);
+        hint('对准二维码：宇航员会用“脚”粘在二维码平面上（不管躺着还是竖着）。');
+      }, undefined, (err)=>{ console.warn(err); hint('模型加载失败'); });
 
-        // 9) 预测 + 平滑
-        const measPos  = new THREE.Vector3(), measQuat = new THREE.Quaternion(), measScl = new THREE.Vector3();
-        const prevPos  = new THREE.Vector3(), prevQuat = new THREE.Quaternion(), prevMeasQuat = new THREE.Quaternion();
-        const tmpPos   = new THREE.Vector3(), tmpQuat = new THREE.Quaternion(), tmpScl = new THREE.Vector3();
-        const deltaQ   = new THREE.Quaternion();
-        let   prevT    = 0;
-        let   inited   = false;
+      // 7) 启动
+      await mindarThree.start();
 
-        renderer.setAnimationLoop((ts) => {
-          // 读取“测量”姿态（anchor 的世界矩阵）
-          anchor.group.matrixWorld.decompose(measPos, measQuat, measScl);
-
-          const now = ts * 0.001; // 秒
-          const dt  = prevT ? Math.max(1e-4, now - prevT) : 0;
-
-          // 预测到短期未来，降低视觉延迟感
-          let predPos  = measPos.clone();
-          let predQuat = measQuat.clone();
-
-          if (prevT > 0) {
-            // 线速度
-            tmpPos.copy(measPos).sub(prevPos).divideScalar(dt);
-            const speed = tmpPos.length();
-            if (speed > MAX_POS_VEL) tmpPos.multiplyScalar(MAX_POS_VEL / Math.max(speed, 1e-6));
-            predPos.add(tmpPos.multiplyScalar(PREDICT_HORIZON_MS / 1000));
-
-            // 角速度（从 q_prev -> q_meas 的增量）
-            deltaQ.copy(prevQuat).invert().multiply(measQuat); // dq = q_prev^-1 * q_meas
-            let ang = 2 * Math.acos(THREE.MathUtils.clamp(deltaQ.w, -1, 1));
-            if (ang > Math.PI) ang = 2*Math.PI - ang; // 最小角
-            const w = ang / dt; // rad/s
-            const wClamp = Math.min(w, MAX_ANG_VEL);
-            if (wClamp > 1e-3) {
-              // 取增量轴
-              let ax=0, ay=0, az=0;
-              const s = Math.sin(ang/2);
-              if (s > 1e-6) { ax = deltaQ.x / s; ay = deltaQ.y / s; az = deltaQ.z / s; }
-              const axis = new THREE.Vector3(ax, ay, az).normalize();
-              const angPred = wClamp * (PREDICT_HORIZON_MS / 1000);
-              const dqPred  = new THREE.Quaternion().setFromAxisAngle(axis, angPred);
-              predQuat.multiply(dqPred);
-            }
-          }
-
-          // 首帧直接对齐
-          if (!inited) {
-            smoothed.position.copy(predPos);
-            smoothed.quaternion.copy(predQuat);
-            smoothed.scale.copy(measScl);
-            inited = true;
-          } else {
-            // 指数平滑到“预测值”
-            smoothed.position.lerp(predPos, ALPHA_POS);
-            smoothed.quaternion.slerp(predQuat, ALPHA_ROT);
-            smoothed.scale.lerp(measScl, ALPHA_SCL);
-          }
-
-          // 记录上一测量
-          prevPos.copy(measPos);
-          prevQuat.copy(measQuat);
-          prevT = now;
-
-          renderer.render(scene, camera);
-        });
-      } catch (e) {
-        console.error(e);
-        hint('启动失败：' + (e && e.message ? e.message : e));
-        enterBtn.style.display = 'block';
+      // 8) 尺寸与像素比（优先流畅）
+      function sizeToContainer() {
+        const w = container.clientWidth, h = container.clientHeight;
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.25));
+        renderer.setSize(w, h, false);
       }
-    });
-  </script>
+      sizeToContainer();
+      window.addEventListener('resize', sizeToContainer);
+
+      // 9) 轻量二次平滑：把 anchor 姿态缓动到 smoothed（减少抖动、不过多引入延迟）
+      const mPos = new THREE.Vector3(), mQuat = new THREE.Quaternion(), mScl = new THREE.Vector3();
+      const inited = { v:false };
+
+      renderer.setAnimationLoop(() => {
+        // 把 anchor 的世界姿态读出来，缓动到 smoothed
+        anchor.group.matrixWorld.decompose(mPos, mQuat, mScl);
+
+        if (!inited.v) {
+          smoothed.position.copy(mPos);
+          smoothed.quaternion.copy(mQuat);
+          smoothed.scale.copy(mScl);
+          inited.v = true;
+        } else {
+          smoothed.position.lerp(mPos, ALPHA_POS);
+          smoothed.quaternion.slerp(mQuat, ALPHA_ROT);
+          smoothed.scale.lerp(mScl, ALPHA_SCL);
+        }
+
+        renderer.render(scene, camera);
+      });
+    } catch (e) {
+      console.error(e);
+      hint('启动失败：' + (e && e.message ? e.message : e));
+      enterBtn.style.display = 'block';
+    }
+  });
+</script>
 </body>
 </html>
