@@ -6,80 +6,89 @@
   <title>AR：宇航员粘在二维码上</title>
   <style>
     html,body {margin:0;height:100%;background:#000;overflow:hidden;}
-    #enter { position:fixed; left:50%; bottom:24px; transform:translateX(-50%); 
+    #enter { position:fixed; left:50%; bottom:24px; transform:translateX(-50%);
       padding:12px 18px; border:0; border-radius:999px; background:#8892ff; color:#111; font-weight:700; }
     #hint { position:fixed; left:12px; right:12px; bottom:72px; color:#9ad; font:14px/1.5 system-ui; text-shadow:0 1px 2px #000; }
   </style>
-  <!-- Three.js（非模块版，避免“无法解析 three”问题） -->
-  <script src="https://cdn.jsdelivr.net/npm/three@0.152.2/build/three.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/three@0.152.2/examples/js/loaders/GLTFLoader.js"></script>
-  <!-- MindAR（纯网页图像跟踪） -->
-  <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-three.prod.js"></script>
 </head>
 <body>
   <button id="enter">进入 AR</button>
   <div id="hint">允许相机后，对准你桌上/墙上的二维码。</div>
 
-  <script>
-    const MODEL_URL = "yuhangyuan.glb";      // 你的宇航员
-    const TARGET_URL = "qr-target.mind";     // 用二维码编译出的 .mind
-    const MODEL_SCALE = 0.05;                // 模型缩放
-    const EPSILON_LIFT = 0.002;              // 抬脚 2mm，避免穿插
-    const ALIGN_TO = "posZ";                 // 把模型的 +Y 贴向二维码法线：posZ 或 negZ
+  <script type="module">
+    // --- 使用 ES Module 版本 ---
+    import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.152.2/build/three.module.js';
+    import { GLTFLoader } from 'https://cdn.jsdelivr.net/npm/three@0.152.2/examples/jsm/loaders/GLTFLoader.js';
+    import { MindARThree } from 'https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-three.module.js';
+
+    const MODEL_URL   = 'yuhangyuan.glb';   // 你的宇航员
+    const TARGET_URL  = 'qr-target.mind';   // 用二维码图编译出的 .mind
+    const MODEL_SCALE = 0.05;               // 模型缩放
+    const EPSILON_LIFT = 0.002;             // 抬脚 2mm，避免穿插
+    // MindAR 中目标平面法线沿 Z 轴；若朝向相反，把下面改成 'negZ'
+    const ALIGN_TO = 'posZ'; // 'posZ' 或 'negZ'
 
     const enterBtn = document.getElementById('enter');
-    const hint = (t)=>{ document.getElementById('hint').textContent = t || ""; };
+    const hint = (t)=>{ document.getElementById('hint').textContent = t || ''; };
 
     let started = false;
     enterBtn.addEventListener('click', async () => {
       if (started) return; started = true; enterBtn.style.display = 'none';
-      hint("正在启动相机…");
+      hint('正在启动相机…');
 
-      // MindAR Three 场景
-      const mindarThree = new window.MINDAR.IMAGE.MindARThree({
-        container: document.body,
-        imageTargetSrc: TARGET_URL,   // 你的二维码目标
-        uiLoading: "no", uiScanning: "no", uiError: "yes",
-        maxTrack: 1
-      });
-      const {renderer, scene, camera} = mindarThree;
+      try {
+        // 1) 初始化 MindARThree（纯网页图像跟踪）
+        const mindarThree = new MindARThree({
+          container: document.body,
+          imageTargetSrc: TARGET_URL, // 你的二维码目标
+          maxTrack: 1,
+          uiLoading: 'no', uiScanning: 'no', uiError: 'yes'
+        });
+        const { renderer, scene, camera } = mindarThree;
 
-      // 光照
-      scene.add(new THREE.HemisphereLight(0xffffff, 0x444466, 0.7));
-      const dir = new THREE.DirectionalLight(0xffffff, 0.8); dir.position.set(1,2,1); scene.add(dir);
+        // 2) 光照
+        scene.add(new THREE.HemisphereLight(0xffffff, 0x444466, 0.7));
+        const dir = new THREE.DirectionalLight(0xffffff, 0.8);
+        dir.position.set(1,2,1);
+        scene.add(dir);
 
-      // 锚点（目标索引 0）
-      const anchor = mindarThree.addAnchor(0);
+        // 3) 锚点：索引 0 对应 .mind 文件中的第一个目标（你的二维码）
+        const anchor = mindarThree.addAnchor(0);
 
-      // peg：用来把模型的“+Y 轴”对齐到“二维码的法线”
-      const peg = new THREE.Group();
-      anchor.group.add(peg);
+        // 4) peg：把模型的本地 +Y 轴旋到“目标法线（Z 轴）”
+        const peg = new THREE.Group();
+        anchor.group.add(peg);
+        {
+          const from = new THREE.Vector3(0,1,0);
+          const to   = (ALIGN_TO === 'negZ') ? new THREE.Vector3(0,0,-1) : new THREE.Vector3(0,0,1);
+          peg.quaternion.copy(new THREE.Quaternion().setFromUnitVectors(from, to));
+        }
 
-      // 把 +Y 旋到目标法线（MindAR 中目标法线是 Z 轴方向）
-      const from = new THREE.Vector3(0,1,0);
-      const to = (ALIGN_TO === "negZ") ? new THREE.Vector3(0,0,-1) : new THREE.Vector3(0,0,1);
-      peg.quaternion.copy(new THREE.Quaternion().setFromUnitVectors(from, to));
+        // 5) 载入模型，并把“脚底”抬到贴合目标平面（y=0）
+        const loader = new GLTFLoader();
+        loader.load(MODEL_URL, (gltf)=>{
+          const model = gltf.scene;
+          model.traverse(o => { if (o.isMesh){ o.castShadow = true; o.receiveShadow = true; }});
+          model.scale.setScalar(MODEL_SCALE);
 
-      // 载入模型并把“脚底”放在二维码平面上（y=0）
-      const loader = new THREE.GLTFLoader();
-      loader.load(MODEL_URL, (gltf)=>{
-        const model = gltf.scene;
-        model.traverse(o => { if (o.isMesh){ o.castShadow = true; o.receiveShadow = true; }});
-        model.scale.setScalar(MODEL_SCALE);
+          const box = new THREE.Box3().setFromObject(model);
+          const footYOffset = -box.min.y + EPSILON_LIFT; // 脚底抬到 y=0
+          model.position.set(0, footYOffset, 0);
 
-        const box = new THREE.Box3().setFromObject(model);
-        const footYOffset = -box.min.y + EPSILON_LIFT; // 脚底抬到 y=0
-        model.position.set(0, footYOffset, 0);
+          peg.add(model);
+          hint('对准二维码：宇航员会用“脚”粘在二维码平面上（不管躺着还是竖着）。');
+        }, undefined, (err)=>{ console.warn(err); hint('模型加载失败'); });
 
-        peg.add(model);
-        hint("对准二维码：宇航员会用脚粘在二维码平面上（不管躺着还是竖着）。");
-      }, undefined, (err)=>{ console.warn(err); hint("模型加载失败"); });
-
-      // 启动渲染循环
-      await mindarThree.start();
-      renderer.setSize(window.innerWidth, window.innerHeight);
-      renderer.setAnimationLoop(()=>{ renderer.render(scene, camera); });
-      window.addEventListener('resize', ()=>renderer.setSize(window.innerWidth, window.innerHeight));
+        // 6) 启动
+        await mindarThree.start();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setAnimationLoop(()=>{ renderer.render(scene, camera); });
+        window.addEventListener('resize', ()=>renderer.setSize(window.innerWidth, window.innerHeight));
+      } catch (e) {
+        console.error(e);
+        hint('启动失败：' + (e?.message || e));
+        enterBtn.style.display = 'block';
+      }
     });
   </script>
 </body>
