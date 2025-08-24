@@ -1,39 +1,73 @@
 <!doctype html>
 <html lang="zh-CN">
+
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>AR：宇航员粘在二维码上</title>
   <style>
-    html,body {margin:0;height:100%;background:#000;overflow:hidden;}
-    #enter { position:fixed; left:50%; bottom:24px; transform:translateX(-50%);
-      padding:12px 18px; border:0; border-radius:999px; background:#8892ff; color:#111; font-weight:700; }
-    #hint { position:fixed; left:12px; right:12px; bottom:72px; color:#9ad; font:14px/1.5 system-ui; text-shadow:0 1px 2px #000; }
+    html,
+    body {
+      margin: 0;
+      height: 100%;
+      background: #000;
+      overflow: hidden;
+    }
+
+    #enter {
+      position: fixed;
+      left: 50%;
+      bottom: 24px;
+      transform: translateX(-50%);
+      padding: 12px 18px;
+      border: 0;
+      border-radius: 999px;
+      background: #8892ff;
+      color: #111;
+      font-weight: 700;
+    }
+
+    #hint {
+      position: fixed;
+      left: 12px;
+      right: 12px;
+      bottom: 72px;
+      color: #9ad;
+      font: 14px/1.5 system-ui;
+      text-shadow: 0 1px 2px #000;
+    }
   </style>
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.152.2/build/three.module.js",
+      "three/examples/jsm/": "https://cdn.jsdelivr.net/npm/three@0.152.2/examples/jsm/"
+    }
+  }
+  </script>
 </head>
+
 <body>
   <button id="enter">进入 AR</button>
   <div id="hint">允许相机后，对准你桌上/墙上的二维码。</div>
 
   <script type="module">
     // Three.js（ESM）
-    import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.152.2/build/three.module.js';
-    import { GLTFLoader } from 'https://cdn.jsdelivr.net/npm/three@0.152.2/examples/jsm/loaders/GLTFLoader.js';
-
-    // MindAR（把 UMD 自动转成 ES Module 的稳定做法）
-    // 这行是关键替换：用 esm.run 将 prod.js 包装为 ESM
+    import * as THREE from 'three';
+    import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+    // 注意：mindar 用的是 ESM 包装
     import * as mindar from 'https://esm.run/mind-ar@1.2.5/dist/mindar-image-three.prod.js';
     const { MindARThree } = mindar;
 
-    const MODEL_URL   = 'yuhangyuan.glb';
-    const TARGET_URL  = 'qr-target.mind';
+    const MODEL_URL = 'yuhangyuan.glb';
+    const TARGET_URL = 'qr-target.mind';
     const MODEL_SCALE = 0.05;
     const EPSILON_LIFT = 0.002;
     // MindAR 中目标平面法线沿 Z 轴；若脚朝向反了，改成 'negZ'
     const ALIGN_TO = 'posZ'; // 'posZ' | 'negZ'
 
     const enterBtn = document.getElementById('enter');
-    const hint = (t)=>{ document.getElementById('hint').textContent = t || ''; };
+    const hint = (t) => { document.getElementById('hint').textContent = t || ''; };
 
     let started = false;
     enterBtn.addEventListener('click', async () => {
@@ -53,7 +87,7 @@
         // 2) 光照
         scene.add(new THREE.HemisphereLight(0xffffff, 0x444466, 0.7));
         const dir = new THREE.DirectionalLight(0xffffff, 0.8);
-        dir.position.set(1,2,1);
+        dir.position.set(1, 2, 1);
         scene.add(dir);
 
         // 3) 锚点（.mind 的第 0 个目标即二维码）
@@ -63,16 +97,16 @@
         const peg = new THREE.Group();
         anchor.group.add(peg);
         {
-          const from = new THREE.Vector3(0,1,0);
-          const to   = (ALIGN_TO === 'negZ') ? new THREE.Vector3(0,0,-1) : new THREE.Vector3(0,0,1);
+          const from = new THREE.Vector3(0, 1, 0);
+          const to = (ALIGN_TO === 'negZ') ? new THREE.Vector3(0, 0, -1) : new THREE.Vector3(0, 0, 1);
           peg.quaternion.copy(new THREE.Quaternion().setFromUnitVectors(from, to));
         }
 
         // 5) 载入模型，脚底贴到二维码平面（y=0）
         const loader = new GLTFLoader();
-        loader.load(MODEL_URL, (gltf)=>{
+        loader.load(MODEL_URL, (gltf) => {
           const model = gltf.scene;
-          model.traverse(o => { if (o.isMesh){ o.castShadow = true; o.receiveShadow = true; }});
+          model.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
           model.scale.setScalar(MODEL_SCALE);
 
           const box = new THREE.Box3().setFromObject(model);
@@ -81,13 +115,13 @@
 
           peg.add(model);
           hint('对准二维码：宇航员会用“脚”粘在二维码平面上（不管躺着还是竖着）。');
-        }, undefined, (err)=>{ console.warn(err); hint('模型加载失败'); });
+        }, undefined, (err) => { console.warn(err); hint('模型加载失败'); });
 
         // 6) 启动
         await mindarThree.start();
         renderer.setSize(window.innerWidth, window.innerHeight);
-        renderer.setAnimationLoop(()=>{ renderer.render(scene, camera); });
-        window.addEventListener('resize', ()=>renderer.setSize(window.innerWidth, window.innerHeight));
+        renderer.setAnimationLoop(() => { renderer.render(scene, camera); });
+        window.addEventListener('resize', () => renderer.setSize(window.innerWidth, window.innerHeight));
       } catch (e) {
         console.error(e);
         hint('启动失败：' + (e?.message || e));
@@ -96,4 +130,5 @@
     });
   </script>
 </body>
+
 </html>
