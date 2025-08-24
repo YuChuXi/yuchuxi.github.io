@@ -2,46 +2,61 @@
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
-  <title>QR Marker Astronaut AR</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no" />
+  <title>QR Astronaut AR</title>
   <style>
     html,body { margin:0; height:100%; overflow:hidden; background:#000; }
-    #enterAR { position: fixed; left:50%; top:50%; transform: translate(-50%,-50%);
-      padding:12px 18px; border:0; border-radius:999px; font-weight:700; background:#aafc; color:#111; z-index:10; cursor:pointer; }
-    #hud { position:fixed; left:12px; top:12px; z-index:9; padding:6px 10px; border-radius:10px; background:#0008; color:#fff; font:14px/1.2 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,"PingFang SC","Microsoft YaHei",sans-serif; }
+    #enterAR {
+      position: fixed; left: 50%; top: 50%; transform: translate(-50%,-50%);
+      padding: 12px 18px; border: 0; border-radius: 999px; font-weight: 700;
+      background: #aafc; color:#111; cursor: pointer; z-index: 10;
+    }
+    #enterAR:active { transform: translate(-50%,-50%) scale(0.98); }
+    #hud {
+      position: fixed; left: 12px; top: 12px; z-index: 9;
+      padding: 6px 10px; border-radius: 10px; background: #0008; color:#fff; font: 14px/1.2 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,"PingFang SC","Microsoft YaHei",sans-serif;
+      user-select: none;
+    }
   </style>
 
-  <!-- 1) 本地 A-Frame（不要 async / defer / type=module） -->
-  <script src="./libs/aframe.min.js"></script>
-  <!-- 2) 本地 MindAR A-Frame 适配层（必须在 A-Frame 之后） -->
-  <script src="./libs/mindar-image-aframe.prod.js"></script>
+  <!-- A-Frame 官方 CDN（务必在 MindAR 之前加载） -->
+  <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
+  <!-- MindAR for A-Frame -->
+  <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
 
-  <!-- 3) 你的代码，等 A-Frame 完成初始化再执行 -->
   <script>
-    function registerComponents() {
-      AFRAME.registerComponent('feet-on-marker', {
-        schema: { yoffset: {type:'number', default: 0} },
-        init: function () {
-          this.el.addEventListener('model-loaded', () => {
-            const obj = this.el.getObject3D('mesh');
-            if (!obj) return;
-            const parent = this.el.object3D;
-            const savedRot = parent.rotation.clone();
-            parent.rotation.set(0,0,0);
-            parent.updateMatrixWorld(true);
-            const box = new THREE.Box3().setFromObject(obj);
-            const minY = box.min.y;
-            parent.rotation.copy(savedRot);
-            parent.updateMatrixWorld(true);
-            this.el.object3D.position.y = this.data.yoffset - minY; // 脚贴到 marker 平面
-          });
-        }
-      });
+    // 让“脚底”贴在二维码平面：自动计算包围盒并把 minY 对齐到 y=0
+    AFRAME.registerComponent('feet-on-marker', {
+      schema: { yoffset: {type:'number', default: 0} },
+      init: function () {
+        this.el.addEventListener('model-loaded', () => {
+          const obj = this.el.getObject3D('mesh');
+          if (!obj) return;
+          const parent = this.el.object3D;
 
+          // 暂时清零父节点旋转，避免 bbox 被旋转影响
+          const savedRot = parent.rotation.clone();
+          parent.rotation.set(0,0,0);
+          parent.updateMatrixWorld(true);
+
+          const box = new THREE.Box3().setFromObject(obj);
+          const minY = box.min.y;   // 模型脚底的局部高度
+
+          // 还原旋转
+          parent.rotation.copy(savedRot);
+          parent.updateMatrixWorld(true);
+
+          // 下沉到 marker 平面（y=0）
+          this.el.object3D.position.y = this.data.yoffset - minY;
+        });
+      }
+    });
+
+    // iOS 需要用户手势触发相机权限，手动“进入AR”
+    document.addEventListener('DOMContentLoaded', () => {
       const scene = document.querySelector('a-scene');
       const startBtn = document.getElementById('enterAR');
       const status = document.getElementById('status');
-
       startBtn.addEventListener('click', async () => {
         startBtn.style.display = 'none';
         try {
@@ -51,44 +66,63 @@
           startBtn.style.display = 'block';
         }
       });
-
       scene.addEventListener('arReady', () => status.textContent = '✔ 摄像头已开启，开始识别二维码…');
       scene.addEventListener('arError', (e) => {
         status.textContent = '✖ AR 启动失败：' + (e && e.detail ? e.detail : '');
         startBtn.style.display = 'block';
       });
-    }
-
-    // A-Frame 会在完成初始化时触发 'aframe-loaded'
-    if (window.AFRAME) {
-      // 已加载（本地脚本几乎总能命中）
-      window.addEventListener('load', registerComponents);
-    } else {
-      // 保险：若 A-Frame 还在初始化，等事件
-      window.addEventListener('aframe-loaded', registerComponents);
-    }
+    });
   </script>
 </head>
+
 <body>
+  <!-- 手动进入，兼容 iOS -->
   <button id="enterAR">进入 AR</button>
   <div id="hud"><span id="status">等待启动…</span></div>
 
+  <!--
+    放同目录：
+    - index.html（本页）
+    - yuhangyuan.glb（模型）
+    - qr-marker.png（二维码原图，用来生成 targets.mind）
+    - targets.mind（由 qr-marker.png 转换得到）
+    需要 HTTPS 或 localhost 打开；不要用 file://
+  -->
   <a-scene
     embedded
     color-space="sRGB"
     vr-mode-ui="enabled: false"
     device-orientation-permission-ui="enabled: true"
     renderer="colorManagement: true; physicallyCorrectLights: true; antialias: true; logarithmicDepthBuffer: true"
-    mindar-image="autoStart: false; imageTargetSrc: ./targets.mind; uiLoading:false; uiError:false; uiScanning:true; filterMinCF:0.0001; filterBeta:0.001; warmupTolerance:5; missTolerance:5;"
+    mindar-image="
+      autoStart: false;
+      imageTargetSrc: ./targets.mind;
+      uiLoading: false; uiError: false; uiScanning: true;
+      filterMinCF: 0.0001; filterBeta: 0.001;
+      warmupTolerance: 5; missTolerance: 5
+    "
   >
+    <!-- 全局补光，避免模型发黑 -->
+    <a-entity light="type: hemisphere; intensity: 1.0; color: #ffffff; groundColor: #666666"></a-entity>
+    <a-entity light="type: directional; intensity: 0.7" position="0 1 1"></a-entity>
+
     <a-assets timeout="30000">
       <a-asset-item id="astronaut" src="./yuhangyuan.glb"></a-asset-item>
     </a-assets>
 
-    <a-camera position="0 0 0" look-controls="enabled:false"></a-camera>
+    <a-camera position="0 0 0" look-controls="enabled: false"></a-camera>
 
+    <!-- targetIndex=0 对应 targets.mind 里的第一个图像（你的二维码） -->
     <a-entity mindar-image-target="targetIndex: 0">
-      <a-entity gltf-model="#astronaut" feet-on-marker rotation="-90 0 0" scale="0.02 0.02 0.02"></a-entity>
+      <!-- 可选：调试平面，确认二维码实物尺寸（例如 0.12m x 0.12m）
+      <a-plane position="0 0 0" width="0.12" height="0.12" color="#00ff00" opacity="0.2"></a-plane>
+      -->
+      <a-entity id="astro"
+        gltf-model="#astronaut"
+        feet-on-marker
+        rotation="-90 0 0"
+        scale="0.5 0.5 0.5"
+      ></a-entity>
     </a-entity>
   </a-scene>
 </body>
