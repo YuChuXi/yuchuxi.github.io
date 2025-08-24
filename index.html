@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no" />
 <title>MindAR + Three | Astronaut on QR</title>
 
-<!-- 官方推荐：ESM + importmap；注意这里用的是 addAnchor(0) 的那套 API -->
+<!-- three + mindar（ESM + importmap） -->
 <script type="importmap">
 {
   "imports": {
@@ -19,11 +19,8 @@
 <style>
   html,body { margin:0; height:100%; overflow:hidden; background:#000; }
   #ar { position: fixed; inset: 0; overflow: hidden; }
-  /* MindAR 会把 <video> 放进容器；铺满底层即可（如需镜像，把 transform 改为 scaleX(-1)） */
-  #ar video {
-    position:absolute; inset:0; width:100%; height:100%;
-    object-fit:cover; transform:none; z-index:0; background:#000; pointer-events:none;
-  }
+  /* 我们将不再用 DOM 视频合成，后面会把它隐藏（但仍播放供追踪） */
+  #ar video { display: none; } /* ★ 关键：隐藏 DOM 视频，防止和 WebGL 叠加导致“半透” */
   canvas { position:absolute; inset:0; z-index:1; }
   #hud { position:fixed; left:12px; top:12px; z-index:5; color:#fff; background:#0008; border-radius:10px; padding:6px 10px; font:14px/1.2 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,"PingFang SC","Microsoft YaHei",sans-serif; }
   #start { position:fixed; left:50%; top:50%; transform:translate(-50%,-50%); z-index:6; padding:12px 18px; border:0; border-radius:999px; font-weight:700; background:#aafc; color:#111; cursor:pointer; }
@@ -44,30 +41,32 @@
     const hud = document.querySelector('#hud');
     const btn = document.querySelector('#start');
 
-    // MindAR 初始化（v1.2.x 起使用 ESM，这是官方当前文档的方式）。:contentReference[oaicite:1]{index=1}
     const mindarThree = new MindARThree({
       container,
       imageTargetSrc: './targets.mind',
       uiLoading: true, uiScanning: true, uiError: true
     });
     const { renderer, scene, camera } = mindarThree;
-    renderer.setClearColor(0x000000, 0); // WebGL 背景透明，视频能透出来
+
+    // ★ 关键：画布不透明清屏，由 WebGL 自己把视频画成“背景”，不再 DOM 叠加
+    renderer.setClearColor(0x000000, 1);      // alpha=1：画布不透明
+    // renderer.outputColorSpace 默认就是 sRGB（r160）
 
     // 灯光
     scene.add(new THREE.HemisphereLight(0xffffff, 0x666666, 1.0));
     const dir = new THREE.DirectionalLight(0xffffff, 0.9); dir.position.set(0,1,1); scene.add(dir);
 
-    // ✅ 正确：为第 0 个图像目标创建锚点（不是 addImageTarget）
-    const anchor = mindarThree.addAnchor(0);  // ← 关键修正！:contentReference[oaicite:2]{index=2}
+    // 第 0 个图像目标的锚点
+    const anchor = mindarThree.addAnchor(0);
 
-    // 平滑锚点：将模型挂到独立 Group，做 lerp/slerp 平滑
+    // 平滑锚点
     const smooth = new THREE.Group(); smooth.visible = false; scene.add(smooth);
 
-    // 载入宇航员
+    // 模型
     const gltf = await new GLTFLoader().loadAsync('./yuhangyuan.glb');
     const astro = gltf.scene;
 
-    // —— 强制材质不透明，避免被视频高亮处“冲掉”成半透明 ——
+    // 强制材质不透明，避免任何混合
     astro.traverse(n=>{
       if(n.isMesh && n.material){
         const mats = Array.isArray(n.material)? n.material : [n.material];
@@ -75,15 +74,17 @@
           m.transparent = false; m.opacity = 1;
           m.depthWrite = true; m.depthTest = true; m.alphaTest = 0;
           m.blending = THREE.NormalBlending; m.side = THREE.FrontSide; m.needsUpdate = true;
+          // 保险：去掉可能携带的 alpha 贴图
+          if (m.alphaMap) m.alphaMap = null;   // ★ 如 GLB 自带 alphaMap，会导致“透”
         });
       }
     });
 
-    // 常见 Y-up：绕 X 轴 -90° 让人直立在平面上
+    // 直立 + 缩放
     astro.rotation.set(Math.PI/2, 0, 0);
     astro.scale.setScalar(0.5);
 
-    // —— 脚底贴到二维码平面（y=0） ——
+    // 脚底贴 y=0
     {
       const parent = new THREE.Group(); parent.add(astro);
       const saved = astro.rotation.clone();
@@ -94,37 +95,39 @@
       astro.rotation.copy(saved);
       astro.position.y -= minY;
     }
-
     smooth.add(astro);
 
-    // 抖动平滑
+    // 平滑参数
     const lerp = 0.5, slerp = 0.5;
     const tmpP = new THREE.Vector3(), tmpQ = new THREE.Quaternion(), tmpS = new THREE.Vector3(), tmpM = new THREE.Matrix4();
 
     anchor.onTargetFound = ()=>{ hud.textContent = '✔ 已锁定二维码（平滑中）'; smooth.visible = true; };
     anchor.onTargetLost  = ()=>{ hud.textContent = '… 重新锁定中';           smooth.visible = false; };
 
-    // 启动（iOS 需要手势）
     btn.addEventListener('click', async ()=>{
       btn.style.display = 'none';
       try{
-        await mindarThree.start();
+        await mindarThree.start();                   // 打开相机
         hud.textContent = '✔ 相机已开启，开始识别二维码…';
 
-        // 确保 <video> 铺底（有些机型会重建节点，用 observer 兜底）
-        const ensureVideo = ()=>{
-          const v = container.querySelector('video');
-          if (!v) return;
+        // ★ 关键：把 MindAR 的 <video> 做成 WebGL 背景纹理（完全规避 DOM 叠加导致的半透）
+        const v = container.querySelector('video');  // MindAR 注入的相机视频
+        if (v) {
           v.setAttribute('playsinline',''); v.setAttribute('webkit-playsinline','');
           v.setAttribute('muted',''); v.muted = true;
-          Object.assign(v.style, {position:'absolute', inset:'0', width:'100%', height:'100%', objectFit:'cover', zIndex:'0', background:'#000', transform:'none'});
-        };
-        ensureVideo();
-        new MutationObserver(ensureVideo).observe(container, {childList:true, subtree:true});
 
-        // 渲染循环（官方示例也是用 setAnimationLoop）:contentReference[oaicite:3]{index=3}
+          const tex = new THREE.VideoTexture(v);
+          tex.colorSpace = THREE.SRGBColorSpace;
+          tex.minFilter = THREE.LinearFilter;
+          tex.magFilter = THREE.LinearFilter;
+          tex.generateMipmaps = false;
+
+          scene.background = tex;                    // ★ 用视频纹理当场景背景
+        }
+
+        // 渲染循环
         renderer.setAnimationLoop(()=>{
-          // 从原始锚点拿世界位姿 → 平滑到 smooth
+          // 原始锚点世界位姿 → 平滑
           anchor.group.updateMatrixWorld();
           tmpM.copy(anchor.group.matrixWorld).decompose(tmpP, tmpQ, tmpS);
           if (smooth.visible){
