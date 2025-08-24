@@ -1,168 +1,116 @@
 <!doctype html>
 <html lang="zh-CN">
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
-<title>AR：宇航员粘在二维码上（UMD 稳定版 v1.1.5）</title>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
+  <title>QR Marker Astronaut AR</title>
+  <style>
+    html,body { margin:0; height:100%; overflow:hidden; background:#000; }
+    #enterAR {
+      position: fixed; left: 50%; top: 50%; transform: translate(-50%,-50%);
+      padding: 12px 18px; border: 0; border-radius: 999px; font-weight: 700;
+      background: #aafc; color:#111; cursor: pointer; z-index: 10;
+    }
+    #enterAR:active { transform: translate(-50%,-50%) scale(0.98); }
+    #hud {
+      position: fixed; left: 12px; top: 12px; z-index: 9;
+      padding: 6px 10px; border-radius: 10px; background: #0008; color:#fff; font: 14px/1.2 system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "PingFang SC", "Microsoft YaHei", sans-serif;
+      user-select: none;
+    }
+  </style>
 
-<!-- 选用与 MindAR v1.1.x 匹配的 three r132 UMD 构建，避免模块冲突 -->
-<script src="https://unpkg.com/three@0.132.2/build/three.min.js"></script>
-<script src="https://unpkg.com/three@0.132.2/examples/js/loaders/GLTFLoader.js"></script>
+  <!-- A-Frame & MindAR（无需打包、避免 three 版本冲突） -->
+  <script src="https://cdn.jsdelivr.net/npm/aframe@1.5.0/dist/aframe.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
 
-<!-- MindAR v1.1.5 的 UMD 版本（非 ESM，不会触发 import 报错） -->
-<script src="https://cdn.jsdelivr.net/npm/mind-ar@1.1.5/dist/mindar-image-three.prod.js"></script>
+  <script>
+    // 把模型“脚底”贴到二维码平面：自动算包围盒并下沉到 y=0
+    AFRAME.registerComponent('feet-on-marker', {
+      schema: { yoffset: {type:'number', default: 0} },
+      init: function () {
+        this.el.addEventListener('model-loaded', () => {
+          const obj = this.el.getObject3D('mesh');
+          if (!obj) return;
 
-<style>
-  html, body { margin:0; padding:0; width:100vw; height:100dvh; overflow:hidden; background:#000;
-               overscroll-behavior:none; touch-action:none; }
-  #ar { position:fixed; inset:0; width:100vw; height:100dvh; background:#000; overflow:hidden; }
-  /* MindAR 注入的 video/canvas/overlay 铺满容器 */
-  #ar video, #ar canvas, #ar .mindar-ui-overlay, #ar .mindar-ui-scanning {
-    position:absolute !important; inset:0 !important; width:100% !important; height:100% !important;
-    max-width:100% !important; max-height:100% !important; display:block !important; object-fit:cover;
-  }
-  #enter { position:fixed; left:50%; bottom:24px; transform:translateX(-50%); z-index:9999;
-           padding:12px 18px; border:0; border-radius:999px; background:#8892ff; color:#111; font-weight:700; }
-  #hint { position:fixed; left:12px; right:12px; bottom:72px; z-index:9999; color:#9ad; font:14px/1.5 system-ui;
-          text-shadow:0 1px 2px #000; pointer-events:none; }
-</style>
+          // 暂存父节点旋转，避免旋转影响 bbox 计算
+          const parent = this.el.object3D;
+          const savedRot = parent.rotation.clone();
+          parent.rotation.set(0,0,0);
+          parent.updateMatrixWorld(true);
+
+          const box = new THREE.Box3().setFromObject(obj);
+          const minY = box.min.y;   // 模型“脚底”高度
+
+          // 还原旋转
+          parent.rotation.copy(savedRot);
+          parent.updateMatrixWorld(true);
+
+          // 下沉到 marker 平面（y=0）
+          this.el.object3D.position.y = this.data.yoffset - minY;
+        });
+      }
+    });
+
+    // 手动“进入 AR”按钮，兼容 iOS 的用户手势启动要求
+    document.addEventListener('DOMContentLoaded', () => {
+      const scene = document.querySelector('a-scene');
+      const startBtn = document.getElementById('enterAR');
+      const status = document.getElementById('status');
+
+      startBtn.addEventListener('click', async () => {
+        startBtn.style.display = 'none';
+        try {
+          await scene.systems['mindar-image-system'].start();
+        } catch (e) {
+          status.textContent = '✖ 无法开启摄像头：' + (e && e.message ? e.message : e);
+          startBtn.style.display = 'block';
+        }
+      });
+
+      scene.addEventListener('arReady', () => status.textContent = '✔ 摄像头已开启，开始识别二维码…');
+      scene.addEventListener('arError', (e) => {
+        status.textContent = '✖ AR 启动失败：' + (e && e.detail ? e.detail : '');
+        startBtn.style.display = 'block';
+      });
+    });
+  </script>
 </head>
 <body>
-  <div id="ar"></div>
-  <button id="enter">进入 AR</button>
-  <div id="hint">允许相机后，对准你桌上/墙上的二维码。</div>
+  <button id="enterAR">进入 AR</button>
+  <div id="hud"><span id="status">等待启动…</span></div>
 
-<script>
-  // —— 资源与参数 ——
-  const MODEL_URL    = 'yuhangyuan.glb';
-  const TARGET_URL   = 'qr-target.mind';
-  const MODEL_SCALE  = 0.5;
-  const EPSILON_LIFT = 0.002;   // 脚底抬 2mm 防穿插
-  const ALIGN_TO     = 'posZ';  // MindAR 目标法线沿 Z；反了改 'negZ'
+  <a-scene
+    embedded
+    color-space="sRGB"
+    vr-mode-ui="enabled: false"
+    device-orientation-permission-ui="enabled: true"
+    renderer="colorManagement: true; physicallyCorrectLights: true; antialias: true; logarithmicDepthBuffer: true"
+    mindar-image="
+      autoStart: false;
+      imageTargetSrc: ./targets.mind;
+      uiLoading: false; uiError: false; uiScanning: true;
+      filterMinCF: 0.0001; filterBeta: 0.001;   /* 轻度滤波，抑制抖动 */
+      warmupTolerance: 5; missTolerance: 5      /* 短暂丢失不飘 */
+    "
+  >
+    <a-assets timeout="30000">
+      <a-asset-item id="astronaut" src="./yuhangyuan.glb"></a-asset-item>
+    </a-assets>
 
-  // MindAR 内置滤波（偏跟手；抖动我们用下游轻平滑处理）
-  const MINDAR_FILTER_MINCF = 0.002;
-  const MINDAR_FILTER_BETA  = 0.08;
-  const WARMUP_TOLERANCE    = 2;
-  const MISS_TOLERANCE      = 10;
+    <a-camera position="0 0 0" look-controls="enabled: false"></a-camera>
 
-  // 我们的二次平滑（越大越跟手）
-  const ALPHA_POS = 0.45;
-  const ALPHA_ROT = 0.55;
-  const ALPHA_SCL = 0.50;
-
-  // 丢失缓冲，去闪烁
-  const HOLD_LOST_MS = 250;
-
-  const $ = s => document.querySelector(s);
-  const container = $('#ar');
-  const enterBtn  = $('#enter');
-  const hintEl    = $('#hint');
-  const hint = t => hintEl.textContent = t || '';
-
-  let started = false;
-  enterBtn.addEventListener('click', async () => {
-    if (started) return; started = true; enterBtn.style.display = 'none';
-    hint('正在启动相机…');
-
-    try {
-      if (!window.MINDAR || !window.MINDAR.IMAGE) throw new Error('MindAR 未加载（检查 CDN）');
-      const MindARThree = window.MINDAR.IMAGE.MindARThree;
-
-      // 1) 初始化
-      const mindarThree = new MindARThree({
-        container,
-        imageTargetSrc: TARGET_URL,
-        maxTrack: 1,
-        uiLoading: 'no', uiScanning: 'no', uiError: 'yes',
-        filterMinCF: MINDAR_FILTER_MINCF,
-        filterBeta:  MINDAR_FILTER_BETA,
-        warmupTolerance: WARMUP_TOLERANCE,
-        missTolerance:  MISS_TOLERANCE
-      });
-      const renderer = mindarThree.renderer;
-      const scene    = mindarThree.scene;
-      const camera   = mindarThree.camera;
-
-      // 2) 光照
-      scene.add(new THREE.HemisphereLight(0xffffff, 0x444466, 0.7));
-      const dir = new THREE.DirectionalLight(0xffffff, 0.8);
-      dir.position.set(1,2,1); scene.add(dir);
-
-      // 3) 锚点（第 0 个目标）
-      const anchor = mindarThree.addAnchor(0);
-
-      // 4) 平滑容器 + “脚粘平面”的 peg（把模型 +Y 旋到目标 Z 法线）
-      const smoothed = new THREE.Group();   // 我们的轻量平滑容器
-      scene.add(smoothed);
-
-      const peg = new THREE.Group();
-      smoothed.add(peg);
-      (function alignPegToTargetNormal(){
-        const from = new THREE.Vector3(0,1,0);
-        const to   = (ALIGN_TO === 'negZ') ? new THREE.Vector3(0,0,-1) : new THREE.Vector3(0,0,1);
-        peg.quaternion.copy(new THREE.Quaternion().setFromUnitVectors(from, to));
-      })();
-
-      // 5) 找到/丢失的可见性防抖
-      let loseTimer = null;
-      anchor.onTargetFound = () => { clearTimeout(loseTimer); smoothed.visible = true; };
-      anchor.onTargetLost  = () => { loseTimer = setTimeout(()=> smoothed.visible = false, HOLD_LOST_MS); };
-
-      // 6) 模型
-      const loader = new THREE.GLTFLoader();
-      loader.load(MODEL_URL, (gltf)=>{
-        const model = gltf.scene;
-        model.traverse(o => { if (o.isMesh){ o.castShadow = false; o.receiveShadow = false; }});
-        model.scale.setScalar(MODEL_SCALE);
-
-        const box = new THREE.Box3().setFromObject(model);
-        const footYOffset = -box.min.y + EPSILON_LIFT; // 脚底抬到 peg 的 y=0
-        model.position.set(0, footYOffset, 0);
-
-        peg.add(model);
-        hint('对准二维码：宇航员会用“脚”粘在二维码平面上（不管躺着还是竖着）。');
-      }, undefined, (err)=>{ console.warn(err); hint('模型加载失败'); });
-
-      // 7) 启动
-      await mindarThree.start();
-
-      // 8) 尺寸与像素比（优先流畅）
-      function sizeToContainer() {
-        const w = container.clientWidth, h = container.clientHeight;
-        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.25));
-        renderer.setSize(w, h, false);
-      }
-      sizeToContainer();
-      window.addEventListener('resize', sizeToContainer);
-
-      // 9) 轻量二次平滑：把 anchor 姿态缓动到 smoothed（减少抖动、不过多引入延迟）
-      const mPos = new THREE.Vector3(), mQuat = new THREE.Quaternion(), mScl = new THREE.Vector3();
-      const inited = { v:false };
-
-      renderer.setAnimationLoop(() => {
-        // 把 anchor 的世界姿态读出来，缓动到 smoothed
-        anchor.group.matrixWorld.decompose(mPos, mQuat, mScl);
-
-        if (!inited.v) {
-          smoothed.position.copy(mPos);
-          smoothed.quaternion.copy(mQuat);
-          smoothed.scale.copy(mScl);
-          inited.v = true;
-        } else {
-          smoothed.position.lerp(mPos, ALPHA_POS);
-          smoothed.quaternion.slerp(mQuat, ALPHA_ROT);
-          smoothed.scale.lerp(mScl, ALPHA_SCL);
-        }
-
-        renderer.render(scene, camera);
-      });
-    } catch (e) {
-      console.error(e);
-      hint('启动失败：' + (e && e.message ? e.message : e));
-      enterBtn.style.display = 'block';
-    }
-  });
-</script>
+    <!-- targetIndex: 0 表示 targets.mind 里的第一个图像（你的 qr-marker.png） -->
+    <a-entity mindar-image-target="targetIndex: 0">
+      <!-- 可选：用半透明平面确认尺寸对齐（示例为 12cm x 12cm） 
+      <a-plane position="0 0 0" width="0.12" height="0.12" color="#00ff00" opacity="0.2"></a-plane>
+      -->
+      <a-entity id="astro"
+        gltf-model="#astronaut"
+        feet-on-marker
+        rotation="-90 0 0"      
+        scale="0.02 0.02 0.02"
+      ></a-entity>
+    </a-entity>
+  </a-scene>
 </body>
 </html>
