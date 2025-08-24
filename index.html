@@ -1,33 +1,48 @@
 <!doctype html>
 <html lang="zh-CN">
+
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>AR 放置模型</title>
   <style>
-    html, body { margin:0; height:100%; overflow:hidden; background:#000; }
+    html,
+    body {
+      margin: 0;
+      height: 100%;
+      overflow: hidden;
+      background: #000;
+    }
+
     #enterAR {
       position: fixed;
       left: 50%;
       top: 50%;
       transform: translate(-50%, -50%);
-      pointer-events:auto; 
-      user-select:none; 
-      cursor:pointer; 
-      border:none; 
-      outline:none; 
-      padding:12px 18px; 
-      border-radius:999px; 
-      font-weight:600;
+      pointer-events: auto;
+      user-select: none;
+      cursor: pointer;
+      border: none;
+      outline: none;
+      padding: 12px 18px;
+      border-radius: 999px;
+      font-weight: 600;
       font-size: 16px;
       font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Noto Sans", "PingFang SC", "Microsoft YaHei", sans-serif;
-      color:#111; 
-      background:#aafc;
+      color: #111;
+      background: #aafc;
     }
-    #enterAR:active { transform: translate(-50%, -50%) scale(0.98); }
-    #enterAR:disabled { cursor: not-allowed; }
+
+    #enterAR:active {
+      transform: translate(-50%, -50%) scale(0.98);
+    }
+
+    #enterAR:disabled {
+      cursor: not-allowed;
+    }
   </style>
 </head>
+
 <body>
   <button id="enterAR">进入 AR</button>
 
@@ -40,138 +55,156 @@
     }
   </script>
   <script type="module">
+
     import * as THREE from 'three';
     import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
-    // const MODEL_URL = 'https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Models/master/2.0/Fox/glTF-Binary/Fox.glb';
-    const MODEL_URL = 'MoGe_00021_.glb';
-    const MODEL_SCALE = 1;
-
-    const scene = new THREE.Scene();
-    const camera = new THREE.PerspectiveCamera();
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: 'high-performance' });
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    renderer.setSize(window.innerWidth, window.innerHeight);
-    renderer.xr.enabled = true;
-    renderer.outputColorSpace = THREE.SRGBColorSpace;
-    document.body.appendChild(renderer.domElement);
-
-    scene.add(new THREE.HemisphereLight(0xffffff, 0x444466, 0.6));
-    const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
-    dirLight.position.set(1, 2, 1);
-    scene.add(dirLight);
-
-    const reticleGeo = new THREE.RingGeometry(0.09, 0.1, 48).rotateX(-Math.PI / 2);
-    const reticleMat = new THREE.MeshBasicMaterial({ color: 0x66ccff, transparent: true, opacity: 0.8 });
-    const reticle = new THREE.Mesh(reticleGeo, reticleMat);
-    reticle.matrixAutoUpdate = false;
-    reticle.visible = false;
-    scene.add(reticle);
-
-    let hitTestSource = null;
-    let hitTestSourceRequested = false;
-    let localSpace = null;
-    let loadedModel = null;
-    let placed = false;
-
-    const loader = new GLTFLoader();
-    loader.load(MODEL_URL, (gltf) => {
-      loadedModel = gltf.scene;
-      loadedModel.traverse(obj => { if (obj.isMesh) { obj.castShadow = true; } });
-      loadedModel.scale.setScalar(MODEL_SCALE);
-      loadedModel.visible = false;
-      scene.add(loadedModel);
-    }, undefined, (err) => console.warn('模型加载失败：', err));
+    // --------- 平台与资源 -----------
+    const IS_IOS = /iPad|iPhone|iPod/.test(navigator.userAgent)
+      || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    const USDZ_URL = 'MoGe_00021_.usdz';
+    const GLB_URL = 'MoGe_00021_.glb';
 
     const enterBtn = document.getElementById('enterAR');
-
     function setEnterEnabled(ok, msg) {
       enterBtn.disabled = !ok;
       enterBtn.style.opacity = ok ? 1 : 0.5;
       if (msg) enterBtn.title = msg;
     }
 
-    if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
-      setEnterEnabled(false, '请通过 HTTPS 或 localhost 打开');
-    } else if (!('xr' in navigator)) {
-      setEnterEnabled(false, '当前浏览器不支持 WebXR，请使用 Android 版 Chrome 并更新 ARCore');
+    // --------- iOS 分支：用 AR Quick Look ----------
+    if (IS_IOS) {
+      // 创建一个隐藏的 <a rel="ar">，点击按钮时触发它
+      const arLink = document.createElement('a');
+      arLink.setAttribute('rel', 'ar');
+      arLink.setAttribute('href', USDZ_URL);
+      // 可选：带缩略图 <img> 会更“标准”，但这里用程序触发点击也能拉起 Quick Look
+      arLink.style.display = 'none';
+      document.body.appendChild(arLink);
+
+      setEnterEnabled(true, 'iOS：打开 AR Quick Look');
+      enterBtn.addEventListener('click', () => arLink.click());
+
     } else {
-      navigator.xr.isSessionSupported('immersive-ar').then((ok) => {
-        setEnterEnabled(ok, ok ? '点击进入 AR' : '设备不支持 AR');
-      }).catch(e => {
-        setEnterEnabled(false, '检查 AR 支持时出错');
-      });
-    }
+      // --------- Android / 桌面支持 WebXR 的分支 ----------
 
-    enterBtn.addEventListener('click', async () => {
-      if (enterBtn.disabled) return;
-      try {
-        const session = await navigator.xr.requestSession('immersive-ar', {
-          requiredFeatures: ['hit-test'],
-          optionalFeatures: ['dom-overlay'],
-          domOverlay: { root: document.body }
-        });
-        renderer.xr.setReferenceSpaceType('local');
-        await renderer.xr.setSession(session);
-      } catch (e) {
-        console.error('无法启动 AR 会话', e);
-        setEnterEnabled(false, '无法启动 AR：' + (e?.message || e));
-      }
-    });
+      const MODEL_URL = GLB_URL;          // 用 GLB/GLTF
+      const MODEL_SCALE = 1;
 
-    const controller = renderer.xr.getController(0);
-    controller.addEventListener('select', () => {
-      if (!loadedModel || !reticle.visible) return;
-      placed = true;
-      loadedModel.visible = true;
-      reticle.matrix.decompose(loadedModel.position, loadedModel.quaternion, loadedModel.scale);
-      loadedModel.scale.setScalar(MODEL_SCALE);
-    });
-    scene.add(controller);
+      const scene = new THREE.Scene();
+      const camera = new THREE.PerspectiveCamera();
+      const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: 'high-performance' });
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.xr.enabled = true;
+      renderer.outputColorSpace = THREE.SRGBColorSpace;
+      document.body.appendChild(renderer.domElement);
 
-    renderer.xr.addEventListener('sessionstart', () => {
-      hitTestSourceRequested = false; hitTestSource = null; localSpace = null;
-      placed = false;
-      if (loadedModel) loadedModel.visible = false;
-      enterBtn.style.display = 'none'; // 进入 AR 后隐藏按钮
-    });
-    renderer.xr.addEventListener('sessionend', () => {
-      hitTestSourceRequested = false; hitTestSource = null; localSpace = null;
+      scene.add(new THREE.HemisphereLight(0xffffff, 0x444466, 0.6));
+      const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+      dirLight.position.set(1, 2, 1);
+      scene.add(dirLight);
+
+      const reticleGeo = new THREE.RingGeometry(0.09, 0.1, 48).rotateX(-Math.PI / 2);
+      const reticleMat = new THREE.MeshBasicMaterial({ color: 0x66ccff, transparent: true, opacity: 0.8 });
+      const reticle = new THREE.Mesh(reticleGeo, reticleMat);
+      reticle.matrixAutoUpdate = false;
       reticle.visible = false;
-      enterBtn.style.display = 'block'; // 退出 AR 后显示按钮
-    });
+      scene.add(reticle);
 
-    renderer.setAnimationLoop((timestamp, frame) => {
-      if (frame) {
-        const session = renderer.xr.getSession();
+      let hitTestSource = null, hitTestSourceRequested = false, localSpace = null;
+      let loadedModel = null, placed = false;
 
-        if (!hitTestSourceRequested) {
-          session.requestReferenceSpace('viewer').then((refSpace) => {
-            session.requestHitTestSource({ space: refSpace }).then((source) => { hitTestSource = source; });
+      const loader = new GLTFLoader();
+      loader.load(MODEL_URL, (gltf) => {
+        loadedModel = gltf.scene;
+        loadedModel.traverse(obj => { if (obj.isMesh) obj.castShadow = true; });
+        loadedModel.scale.setScalar(MODEL_SCALE);
+        loadedModel.visible = false;
+        scene.add(loadedModel);
+      }, undefined, (err) => console.warn('模型加载失败：', err));
+
+      // HTTPS / WebXR 能力检查
+      if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
+        setEnterEnabled(false, '请通过 HTTPS 或 localhost 打开');
+      } else if (!('xr' in navigator)) {
+        setEnterEnabled(false, '当前浏览器不支持 WebXR（建议 Android Chrome）');
+      } else {
+        navigator.xr.isSessionSupported('immersive-ar').then((ok) => {
+          setEnterEnabled(ok, ok ? '点击进入 AR' : '设备不支持 AR');
+        }).catch(() => setEnterEnabled(false, '检查 AR 支持时出错'));
+      }
+
+      enterBtn.addEventListener('click', async () => {
+        if (enterBtn.disabled) return;
+        try {
+          const session = await navigator.xr.requestSession('immersive-ar', {
+            requiredFeatures: ['hit-test'],
+            optionalFeatures: ['dom-overlay'],
+            domOverlay: { root: document.body }
           });
-          localSpace = renderer.xr.getReferenceSpace();
-          session.addEventListener('end', () => { hitTestSourceRequested = false; hitTestSource = null; });
-          hitTestSourceRequested = true;
+          renderer.xr.setReferenceSpaceType('local');
+          await renderer.xr.setSession(session);
+        } catch (e) {
+          console.error('无法启动 AR 会话', e);
+          setEnterEnabled(false, '无法启动 AR：' + (e?.message || e));
         }
+      });
 
-        if (hitTestSource) {
-          const hitTestResults = frame.getHitTestResults(hitTestSource);
-          if (hitTestResults.length > 0 && !placed) {
-            const hit = hitTestResults[0];
-            const pose = hit.getPose(localSpace);
-            reticle.visible = true;
-            reticle.matrix.fromArray(pose.transform.matrix);
-          } else if (!placed) {
-            reticle.visible = false;
+      const controller = renderer.xr.getController(0);
+      controller.addEventListener('select', () => {
+        if (!loadedModel || !reticle.visible) return;
+        placed = true;
+        loadedModel.visible = true;
+        reticle.matrix.decompose(loadedModel.position, loadedModel.quaternion, loadedModel.scale);
+        loadedModel.scale.setScalar(MODEL_SCALE);
+      });
+      scene.add(controller);
+
+      renderer.xr.addEventListener('sessionstart', () => {
+        hitTestSourceRequested = false; hitTestSource = null; localSpace = null;
+        placed = false;
+        if (loadedModel) loadedModel.visible = false;
+        enterBtn.style.display = 'none';
+      });
+      renderer.xr.addEventListener('sessionend', () => {
+        hitTestSourceRequested = false; hitTestSource = null; localSpace = null;
+        reticle.visible = false;
+        enterBtn.style.display = 'block';
+      });
+
+      renderer.setAnimationLoop((timestamp, frame) => {
+        if (frame) {
+          const session = renderer.xr.getSession();
+          if (!hitTestSourceRequested) {
+            session.requestReferenceSpace('viewer').then((refSpace) => {
+              session.requestHitTestSource({ space: refSpace }).then((source) => { hitTestSource = source; });
+            });
+            localSpace = renderer.xr.getReferenceSpace();
+            session.addEventListener('end', () => { hitTestSourceRequested = false; hitTestSource = null; });
+            hitTestSourceRequested = true;
+          }
+          if (hitTestSource) {
+            const hitTestResults = frame.getHitTestResults(hitTestSource);
+            if (hitTestResults.length > 0 && !placed) {
+              const hit = hitTestResults[0];
+              const pose = hit.getPose(localSpace);
+              reticle.visible = true;
+              reticle.matrix.fromArray(pose.transform.matrix);
+            } else if (!placed) {
+              reticle.visible = false;
+            }
           }
         }
-      }
-      renderer.render(scene, camera);
-    });
+        renderer.render(scene, camera);
+      });
 
-    window.addEventListener('resize', () => {
-      renderer.setSize(window.innerWidth, window.innerHeight);
-    });
+      window.addEventListener('resize', () => {
+        renderer.setSize(window.innerWidth, window.innerHeight);
+      });
+    }
   </script>
+
 </body>
+
 </html>
