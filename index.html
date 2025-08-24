@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no" />
-<title>MindAR + Three | 稳定版（去调试 + 远处不丢面）</title>
+<title>MindAR + Three | 基线稳定版（直挂锚点）</title>
 
 <script type="importmap">
 {
@@ -50,54 +50,42 @@ const container = document.querySelector('#ar');
 const hud = document.querySelector('#hud');
 const btn = document.querySelector('#start');
 
-// MindAR 初始化（开启轻度滤波，稳一点）
+// —— MindAR：只开轻滤波，其它走默认 ——
 const mindarThree = new MindARThree({
   container,
   imageTargetSrc: './targets.mind',
   uiLoading: true, uiScanning: true, uiError: true,
   filterMinCF: 0.0001,
   filterBeta: 0.0005,
-  warmupTolerance: 3,
-  missTolerance: 3,
 });
 const { renderer, scene, camera } = mindarThree;
 renderer.setClearColor(0x000000, 0);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 
-// 灯光
+// —— 灯光 ——
 scene.add(new THREE.HemisphereLight(0xffffff, 0x666666, 1.0));
 const dir = new THREE.DirectionalLight(0xffffff, 0.9); dir.position.set(0,1,1); scene.add(dir);
 
-// 锚点
+// —— 锚点 ——
 const anchor = mindarThree.addAnchor(0);
 
-// 载入模型
+// —— 载入模型（宇航员） ——
 const gltf = await new GLTFLoader().loadAsync('./yuhangyuan.glb');
 const astro = gltf.scene;
 
-// 材质/裁剪/抗闪烁设置（关键）
+// 关键：防止远处视锥裁剪；材质保持正常前面渲染，不做 polygonOffset 等骚操作
 astro.traverse(n=>{
   if (n.isMesh){
-    n.frustumCulled = false;           // 防止远处包围盒异常被裁掉
+    n.frustumCulled = false;
     if (n.material){
       const mats = Array.isArray(n.material) ? n.material : [n.material];
       mats.forEach(m=>{
         m.transparent = false; m.opacity = 1;
         m.depthWrite = true; m.depthTest = true;
-        m.alphaTest = 0;
-        m.blending = THREE.NormalBlending;
-        m.side = THREE.DoubleSide;     // 避免远处因法线/精度导致背面被裁
-        m.polygonOffset = true;        // 减少自相互遮挡/远处闪烁
-        m.polygonOffsetFactor = 1;
-        m.polygonOffsetUnits  = 1;
+        m.alphaTest = 0; m.blending = THREE.NormalBlending;
+        m.side = THREE.FrontSide;  // 保持默认前面渲染
         m.needsUpdate = true;
-        // 可选：改善远处贴图采样
-        if (m.map){
-          m.map.anisotropy = renderer.capabilities.getMaxAnisotropy?.() || 8;
-          m.map.minFilter = THREE.LinearMipmapLinearFilter;
-          m.map.magFilter = THREE.LinearFilter;
-        }
       });
     }
   }
@@ -116,30 +104,23 @@ astro.scale.setScalar(0.5);
   astro.position.y -= box.min.y;
 }
 
-// 直接挂锚点（最稳的显隐/回捕）
+// 直接挂锚点：最稳
 anchor.group.add(astro);
 
-// 回调做显隐
-anchor.onTargetFound = ()=>{
-  astro.visible = true;
-  hud.textContent = '✔ 已锁定二维码';
-};
-anchor.onTargetLost = ()=>{
-  astro.visible = false;
-  hud.textContent = '… 重新锁定中';
-};
+// 显隐：用回调通知 + 每帧兜底（以防某些设备回调漏发）
+astro.visible = false;
+anchor.onTargetFound = ()=>{ astro.visible = true;  hud.textContent = '✔ 已锁定二维码'; };
+anchor.onTargetLost  = ()=>{ astro.visible = false; hud.textContent = '… 重新锁定中'; };
 
-// 启动（iOS 需要手势）
+// —— 启动（iOS 需手势） ——
 btn.addEventListener('click', async ()=>{
   btn.style.display = 'none';
   try{
     await mindarThree.start();
     hud.textContent = '✔ 相机已开启，开始识别二维码…';
 
-    // 相机裁剪面 —— 提升深度精度，避免远处面片丢失
-    camera.near = 0.1;   // 不要太小（0.01 容易深度精度差）
-    camera.far  = 200;   // 不要太大（5000 容易远处抖动/消面）
-    camera.updateProjectionMatrix();
+    // 不再硬改 near/far，用 MindAR 默认相机参数（避免误杀可见性）
+    // camera.near/camera.far 保持默认；若仍有远处闪片，再微调，不一次性拉太极端
 
     // 确保 <video> 铺底
     const ensureVideo = ()=>{
@@ -147,15 +128,20 @@ btn.addEventListener('click', async ()=>{
       if (!v) return;
       v.setAttribute('playsinline',''); v.setAttribute('webkit-playsinline','');
       v.setAttribute('muted',''); v.muted = true;
-      Object.assign(v.style, {position:'absolute', inset:'0', width:'100%', height:'100%', objectFit:'cover', zIndex:'0', background:'#000', transform:'none'});
+      Object.assign(v.style, {
+        position:'absolute', inset:'0', width:'100%', height:'100%',
+        objectFit:'cover', zIndex:'0', background:'#000', transform:'none'
+      });
     };
     ensureVideo();
     new MutationObserver(ensureVideo).observe(container, {childList:true, subtree:true});
 
-    // 渲染循环
-    renderer.setAnimationLoop(()=>{ renderer.render(scene, camera); });
+    // 渲染循环：每帧跟随锚点可见性兜底
+    renderer.setAnimationLoop(()=>{
+      astro.visible = anchor.group.visible; // ← 关键兜底：回调漏发也能显示/隐藏
+      renderer.render(scene, camera);
+    });
 
-    // 自适应分辨率
     window.addEventListener('resize', ()=>{
       renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     });
