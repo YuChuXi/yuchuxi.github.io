@@ -7,18 +7,17 @@
   <style>
     html, body { margin:0; height:100%; overflow:hidden; background:#000; }
     #enterAR {
-      position: fixed; left: 50%; top: 50%;
-      transform: translate(-50%, -50%);
+      position: fixed; left:50%; top:50%; transform: translate(-50%, -50%);
       pointer-events:auto; user-select:none; cursor:pointer;
       border:none; outline:none; padding:12px 18px; border-radius:999px;
-      font-weight:600; font-size:16px; font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Noto Sans", "PingFang SC", "Microsoft YaHei", sans-serif;
+      font-weight:600; font-size:16px; font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "PingFang SC", "Microsoft YaHei", sans-serif;
       color:#111; background:#aafc;
     }
     #enterAR:active { transform: translate(-50%, -50%) scale(0.98); }
     #enterAR:disabled { cursor:not-allowed; opacity:.5; }
     #hint {
-      position: fixed; left: 12px; bottom: 12px; right: 12px;
-      color:#9ad; font-size:14px; line-height:1.5; font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "PingFang SC", sans-serif;
+      position: fixed; left:12px; right:12px; bottom:12px; color:#9ad;
+      font-size:14px; line-height:1.5; font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "PingFang SC", "Microsoft YaHei", sans-serif;
       opacity:.9; pointer-events:none;
     }
   </style>
@@ -48,19 +47,17 @@
     const USDZ_URL = 'yuhangyuan.usdz';
     const GLB_URL  = 'yuhangyuan.glb';
 
-    // 你的二维码图片（与页面同目录），以及“打印出来的实际宽度（米）”
+    // 你的二维码图 & 实际打印宽度（米）
     const QR_IMAGE_URL    = 'qr-marker.png';
-    const QR_REAL_WIDTH_M = 0.12;   // 例如你打印的是 16 cm 宽，就填 0.16
+    const QR_REAL_WIDTH_M = 0.16;      // 例：16cm => 0.16
+    const EPSILON_LIFT    = 0.002;     // 防止穿插平面的小抬升（2mm）
 
     const enterBtn = document.getElementById('enterAR');
     const hintEl   = document.getElementById('hint');
-    function setEnterEnabled(ok, msg) {
-      enterBtn.disabled = !ok;
-      if (msg) { enterBtn.title = msg; hint(msg); }
-    }
-    function hint(msg) { hintEl.textContent = msg || ''; }
+    const hint = (msg) => hintEl.textContent = msg || '';
+    const setEnterEnabled = (ok, msg) => { enterBtn.disabled = !ok; if (msg) { enterBtn.title = msg; hint(msg); } };
 
-    // ---------- iOS：AR Quick Look（无法做图像跟踪） ----------
+    // ---------- iOS：AR Quick Look（无图像跟踪） ----------
     if (IS_IOS) {
       const arLink = document.createElement('a');
       arLink.setAttribute('rel', 'ar');
@@ -70,13 +67,10 @@
 
       setEnterEnabled(true, 'iOS：打开 AR Quick Look（无法锁定到二维码）');
       enterBtn.addEventListener('click', () => arLink.click());
-      hint('提示：iOS 的 AR Quick Look 目前不支持识别你自定义的二维码来定位模型。若需“站在二维码上”，请使用支持 WebXR 的 Android 设备。');
+      hint('提示：iOS 的 AR Quick Look 不支持网页端自定义图像跟踪；若要“粘在二维码上”，请用 Android Chrome（WebXR）。');
     }
     // ---------- Android / 支持 WebXR 的桌面 ----------
     else {
-      const MODEL_URL   = GLB_URL;
-      const MODEL_SCALE = 0.05;
-
       const scene = new THREE.Scene();
       const camera = new THREE.PerspectiveCamera();
       const renderer = new THREE.WebGLRenderer({ antialias:true, alpha:true, powerPreference:'high-performance' });
@@ -86,13 +80,13 @@
       renderer.outputColorSpace = THREE.SRGBColorSpace;
       document.body.appendChild(renderer.domElement);
 
-      // 光源
+      // 光照
       scene.add(new THREE.HemisphereLight(0xffffff, 0x444466, 0.6));
       const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
       dirLight.position.set(1,2,1);
       scene.add(dirLight);
 
-      // 命中圆环（用于平面点击放置的后备方案）
+      // 命中圆环（平面后备）
       const reticleGeo = new THREE.RingGeometry(0.09, 0.1, 48).rotateX(-Math.PI / 2);
       const reticleMat = new THREE.MeshBasicMaterial({ color:0x66ccff, transparent:true, opacity:0.8 });
       const reticle = new THREE.Mesh(reticleGeo, reticleMat);
@@ -100,53 +94,59 @@
       reticle.visible = false;
       scene.add(reticle);
 
-      // 用于“二维码锚点”的容器
-      const markerGroup = new THREE.Group();
+      // “二维码锚点容器” -> “对齐法线的 peg” -> “模型”
+      const markerGroup = new THREE.Group();     // 跟随二维码位姿（中心 & 朝向）
       markerGroup.matrixAutoUpdate = false;
       markerGroup.visible = false;
       scene.add(markerGroup);
 
-      // 模型加载
+      const peg = new THREE.Group();             // 让 peg 的本地 +Y 对齐到二维码平面法线
+      peg.matrixAutoUpdate = true;
+      markerGroup.add(peg);
+
+      // 模型
+      const MODEL_SCALE = 0.05;
       let loadedModel = null;
-      let footYOffset = 0;  // 让脚“踩”在二维码平面上的偏移（把模型底部抬到 y=0）
+      let footYOffset = 0; // 模型底部到原点的偏移（让“脚”贴合 peg 的 +Y=0 平面）
       const loader = new GLTFLoader();
-      loader.load(MODEL_URL, (gltf) => {
+      loader.load(GLB_URL, (gltf) => {
         loadedModel = gltf.scene;
-        loadedModel.traverse(obj => { if (obj.isMesh) obj.castShadow = true; });
+        loadedModel.traverse(o => { if (o.isMesh) o.castShadow = true; });
         loadedModel.scale.setScalar(MODEL_SCALE);
 
-        // 计算模型 AABB，把底部抬到原点（这样 markerGroup 的平面就是地面）
+        // 计算 AABB，把底部抬到 y=0（模型脚底落在 peg 的原点平面上）
         const box = new THREE.Box3().setFromObject(loadedModel);
-        footYOffset = -box.min.y;
-        loadedModel.position.y = footYOffset;
+        footYOffset = -box.min.y + EPSILON_LIFT; // 加一点点抬升避免穿插
+        loadedModel.position.set(0, footYOffset, 0);
 
-        markerGroup.add(loadedModel);
+        peg.add(loadedModel);
       }, undefined, (err) => console.warn('模型加载失败：', err));
 
-      // 状态变量
-      let hitTestSource = null, hitTestSourceRequested = false, localSpace = null;
-      let placedByPlane = false;
-
-      // 预加载“要被跟踪的二维码图”
+      // 状态
       let qrBitmap = null;
+      let hitTestSource = null, hitTestSourceRequested = false, localSpace = null;
+      let placedByPlane = false;  // 若二维码未识别，允许先用平面后备放置
+      let anchor = null;
+
+      // 预加载二维码图
       (async () => {
         try {
           const blob = await fetch(QR_IMAGE_URL).then(r => r.blob());
           qrBitmap = await createImageBitmap(blob);
-          hint('已加载二维码图像，进入 AR 后会自动对齐到二维码。');
+          hint('已加载二维码图像，进入 AR 后会自动“粘在二维码”上。');
         } catch (e) {
-          console.warn('二维码图片加载失败，将仅支持平面命中放置：', e);
+          console.warn('二维码图片加载失败，将使用平面命中后备：', e);
           hint('未能加载二维码图片，进入 AR 后改为平面命中放置。');
         }
       })();
 
-      // HTTPS / WebXR 能力检查
+      // HTTPS / WebXR 检查
       if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
         setEnterEnabled(false, '请通过 HTTPS 或 localhost 打开');
       } else if (!('xr' in navigator)) {
         setEnterEnabled(false, '当前浏览器不支持 WebXR（建议 Android Chrome）');
       } else {
-        navigator.xr.isSessionSupported('immersive-ar').then((ok) => {
+        navigator.xr.isSessionSupported('immersive-ar').then(ok => {
           setEnterEnabled(ok, ok ? '点击进入 AR' : '设备不支持 AR');
         }).catch(() => setEnterEnabled(false, '检查 AR 支持时出错'));
       }
@@ -154,11 +154,10 @@
       enterBtn.addEventListener('click', async () => {
         if (enterBtn.disabled) return;
         try {
-          const requiredFeatures = ['hit-test'];              // 平面命中作为后备
-          const optionalFeatures = ['dom-overlay', 'anchors']; // anchors 稳定模型
+          const requiredFeatures = ['hit-test'];                 // 平面命中后备
+          const optionalFeatures = ['dom-overlay', 'anchors'];   // anchors 更稳
           const init = { requiredFeatures, optionalFeatures, domOverlay:{ root: document.body } };
 
-          // 若二维码图像已加载，则启用“图像跟踪”
           if (qrBitmap) {
             requiredFeatures.push('image-tracking');
             init.trackedImages = [{ image: qrBitmap, widthInMeters: QR_REAL_WIDTH_M }];
@@ -173,24 +172,83 @@
         }
       });
 
-      // 控制器点击（仅用于平面命中放置的后备）
+      // 点击（用于平面后备）
       const controller = renderer.xr.getController(0);
       controller.addEventListener('select', () => {
         if (!reticle.visible || !loadedModel) return;
         placedByPlane = true;
         markerGroup.visible = true;
-        // 将 markerGroup 放在 reticle 位置（因为模型在 markerGroup 里，且底部已抬到 y=0）
         reticle.matrix.decompose(markerGroup.position, markerGroup.quaternion, markerGroup.scale);
+
+        // 平面后备时，默认让 peg 的 +Y 朝上（地面法线）
+        peg.quaternion.copy(new THREE.Quaternion()); // 重置
+        loadedModel.position.set(0, footYOffset, 0);
       });
       scene.add(controller);
+
+      // 辅助：从父矩阵中获取世界轴
+      const _getWorldAxes = (obj) => {
+        obj.updateMatrixWorld(true);
+        const m = obj.matrixWorld.elements;
+        // Three.js 列主序：第0列x轴、第1列y轴、第2列z轴（取前三行）
+        const x = new THREE.Vector3(m[0], m[1], m[2]).normalize();
+        const y = new THREE.Vector3(m[4], m[5], m[6]).normalize();
+        const z = new THREE.Vector3(m[8], m[9], m[10]).normalize();
+        return { x, y, z };
+      };
+
+      // 让 peg 的本地 +Y 轴对齐到 markerGroup 的“法线轴”
+      // 思路：找出 markerGroup 的 (±X/±Y/±Z) 中“最朝向相机”的那个方向作为平面法线；
+      // 然后把 peg 的 +Y 旋到那个方向（粘在二维码上，脚贴平面）
+      let lastAxisIndex = -1, lastAxisSign = 1;
+      const _alignPegToMarkerNormal = () => {
+        if (!renderer.xr.isPresenting) return;
+        const xrCam = renderer.xr.getCamera(camera);
+        const camPos = new THREE.Vector3().setFromMatrixPosition(xrCam.matrixWorld);
+        const markerPos = new THREE.Vector3().setFromMatrixPosition(markerGroup.matrixWorld);
+        const toCam = camPos.clone().sub(markerPos).normalize();
+
+        const { x, y, z } = _getWorldAxes(markerGroup);
+        const candidates = [
+          { i:0, s:+1, v:x }, { i:0, s:-1, v:x.clone().negate() },
+          { i:1, s:+1, v:y }, { i:1, s:-1, v:y.clone().negate() },
+          { i:2, s:+1, v:z }, { i:2, s:-1, v:z.clone().negate() },
+        ];
+        // 选与 toCam 点积最大的（最面向相机）的轴为法线方向
+        let best = candidates[0], bestDot = -Infinity;
+        for (const c of candidates) {
+          const d = c.v.dot(toCam);
+          if (d > bestDot) { bestDot = d; best = c; }
+        }
+
+        // 若轴发生变化（避免抖动，可加一点阈值）
+        if (best.i !== lastAxisIndex || best.s !== lastAxisSign) {
+          lastAxisIndex = best.i; lastAxisSign = best.s;
+
+          // 在“父坐标系（markerGroup本地）”中，对应的单位轴向量：
+          const axisLocal =
+            best.i === 0 ? new THREE.Vector3(best.s,0,0) :
+            best.i === 1 ? new THREE.Vector3(0,best.s,0) :
+                           new THREE.Vector3(0,0,best.s);
+
+          // 把 peg 的 +Y 对齐到这个轴（相对父坐标）
+          const from = new THREE.Vector3(0,1,0);
+          const q = new THREE.Quaternion().setFromUnitVectors(from, axisLocal.clone().normalize());
+          peg.quaternion.copy(q);
+
+          // 模型脚落在二维码平面：模型在 peg 内部沿 +Y 抬起 footYOffset
+          if (loadedModel) loadedModel.position.set(0, footYOffset, 0);
+        }
+      };
 
       // Session 生命周期
       renderer.xr.addEventListener('sessionstart', () => {
         hitTestSourceRequested = false; hitTestSource = null; localSpace = null;
         placedByPlane = false;
         markerGroup.visible = false;
+        anchor = null;
         enterBtn.style.display = 'none';
-        hint('对准桌上的二维码。如果暂未识别到，将显示蓝色圆环，点按屏幕后也能临时放置。');
+        hint('对准二维码。识别成功后，宇航员会“用脚粘在二维码面上”（不论平放还是立在墙上）。');
       });
       renderer.xr.addEventListener('sessionend', () => {
         hitTestSourceRequested = false; hitTestSource = null; localSpace = null;
@@ -200,12 +258,10 @@
       });
 
       // 动画循环
-      let anchor = null;  // 成功识别后创建锚点，提升稳定位姿
       renderer.setAnimationLoop((timestamp, frame) => {
         if (frame) {
           const session = renderer.xr.getSession();
 
-          // 首次申请 hit-test 源与参考空间
           if (!hitTestSourceRequested) {
             session.requestReferenceSpace('viewer').then((refSpace) => {
               session.requestHitTestSource({ space: refSpace }).then((source) => { hitTestSource = source; });
@@ -215,40 +271,45 @@
             hitTestSourceRequested = true;
           }
 
-          // ------- 图像跟踪：让模型“站在二维码上” -------
+          // ------- 图像跟踪 -------
           if (frame.getImageTrackingResults) {
             const results = frame.getImageTrackingResults();
             for (const result of results) {
-              // 我们只跟踪第 0 张图（上面传入的那张二维码）
               if (result.index === 0 && result.trackingState === 'tracked') {
                 const pose = frame.getPose(result.imageSpace, localSpace);
                 if (pose) {
-                  // 有 anchors 能力则创建锚点，提高稳定性
+                  // 创建 anchor（更稳）
                   if (!anchor && frame.createAnchor) {
                     frame.createAnchor(pose.transform, result.imageSpace).then(a => { anchor = a; }).catch(()=>{});
                   }
-                  // 直接使用当前的图像姿态（即使没有 anchor）
+                  // 使用当前姿态驱动 markerGroup
                   markerGroup.visible = !!loadedModel;
                   markerGroup.matrix.fromArray(pose.transform.matrix);
-                  reticle.visible = false;        // 已经锁定到二维码，不再显示蓝环
-                  placedByPlane = true;           // 视为已放置（以屏蔽后面的蓝环逻辑）
+
+                  // 对齐 peg 到二维码法线（粘贴）
+                  _alignPegToMarkerNormal();
+
+                  // 已“放置”，不再显示后备圆环
+                  reticle.visible = false;
+                  placedByPlane = true;
                 }
               }
             }
           }
 
-          // 已创建 anchor：用 anchorSpace 驱动（更稳）
+          // ------- anchor 稳定（可选） -------
           if (anchor) {
             const ap = frame.getPose(anchor.anchorSpace, localSpace);
             if (ap) {
               markerGroup.visible = !!loadedModel;
               markerGroup.matrix.fromArray(ap.transform.matrix);
+              _alignPegToMarkerNormal();
               reticle.visible = false;
               placedByPlane = true;
             }
           }
 
-          // ------- 平面命中后备（当还未识别到二维码时） -------
+          // ------- 平面命中后备（二维码未识别时） -------
           if (hitTestSource && !placedByPlane) {
             const hitTestResults = frame.getHitTestResults(hitTestSource);
             if (hitTestResults.length > 0) {
@@ -264,9 +325,7 @@
         renderer.render(scene, camera);
       });
 
-      window.addEventListener('resize', () => {
-        renderer.setSize(window.innerWidth, window.innerHeight);
-      });
+      window.addEventListener('resize', () => renderer.setSize(window.innerWidth, window.innerHeight));
     }
   </script>
 </body>
