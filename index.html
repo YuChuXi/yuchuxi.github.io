@@ -1,156 +1,113 @@
 <!doctype html>
 <html lang="zh-CN">
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no" />
-<title>MindAR + Three | 基线稳定版（直挂锚点）</title>
-
-<script type="importmap">
-{
-  "imports": {
-    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
-    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/",
-    "mindar-image-three": "https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-three.prod.js"
-  }
-}
-</script>
-
-<style>
-  html,body{margin:0;height:100%;overflow:hidden;background:#000;}
-  #ar{position:fixed;inset:0;overflow:hidden;}
-  #ar video{
-    position:absolute; inset:0; width:100%; height:100%;
-    object-fit:cover; transform:none; z-index:0; background:#000; pointer-events:none;
-  }
-  canvas{position:absolute; inset:0; z-index:1;}
-  #hud{
-    position:fixed; left:12px; top:12px; z-index:5;
-    color:#fff; background:#0008; border-radius:10px; padding:6px 10px;
-    font:14px/1.2 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,"PingFang SC","Microsoft YaHei",sans-serif;
-  }
-  #start{
-    position:fixed; left:50%; top:50%; transform:translate(-50%,-50%);
-    z-index:6; padding:12px 18px; border:0; border-radius:999px; font-weight:700;
-    background:#aafc; color:#111; cursor:pointer;
-  }
-  #start:active{ transform:translate(-50%,-50%) scale(0.98); }
-</style>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
+  <title>Image Tracking FBX AR (Android + iOS)</title>
+  <!-- A-Frame core -->
+  <script src="https://aframe.io/releases/1.4.1/aframe.min.js"></script>
+  <!-- AR.js with NFT (natural image) tracking for A-Frame -->
+  <script src="https://cdn.jsdelivr.net/gh/AR-js-org/AR.js@3.4.2/aframe/build/aframe-ar-nft.js"></script>
+  <!-- A-Frame Extras: animation-mixer -->
+  <script src="https://cdn.jsdelivr.net/gh/c-frame/aframe-extras@v6.1.1/dist/aframe-extras.min.js"></script>
+  <!-- A-Frame Extras loaders (registers fbx-model component) -->
+  <script src="https://cdn.jsdelivr.net/gh/c-frame/aframe-extras@v6.1.1/dist/aframe-extras.loaders.min.js"></script>
+  <!-- Optional dependency used by FBXLoader in some cases -->
+  <script src="https://cdn.jsdelivr.net/npm/three@0.152.2/examples/js/libs/inflate.min.js"></script>
+  <style>
+    html, body { height: 100%; margin: 0; background:#000; }
+    #overlay {
+      position: fixed; inset: 0; display: grid; place-items: center;
+      background: #0b0b0bcc; color: #fff; z-index: 10; padding: 24px;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+    }
+    .btn { appearance: none; border: 0; padding: 14px 18px; font-size: 16px;
+      background: #10b981; color: #00110a; border-radius: 12px; cursor: pointer; }
+    .btn:active { transform: translateY(1px); }
+    .tips { max-width: 520px; text-align: center; opacity: .9; line-height: 1.5; margin-top: 12px; font-size: 14px; }
+  </style>
 </head>
 <body>
-  <div id="ar"></div>
-  <div id="hud">等待启动…</div>
-  <button id="start">进入 AR</button>
+  <!-- Click-to-start overlay (satisfies iOS user gesture) -->
+  <div id="overlay">
+    <div style="text-align:center">
+      <h2 style="margin:0 0 8px">点击开始 AR</h2>
+      <button class="btn" id="startBtn">进入相机并识别图片</button>
+      <div class="tips">请在 HTTPS 下打开。将摄像头对准你训练过的图片目标，FBX 模型会“粘”在图片上并播放内置动画。</div>
+    </div>
+  </div>
 
-<script type="module">
-import * as THREE from 'three';
-import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { MindARThree } from 'mindar-image-three';
+  <script>
+    // ---- 配置：把下面的路径替换为你的资源 ----
+    const NFT_BASE_URL = 'target/龙'; // 不要写扩展名；需要 three 个文件：.fset、.fset3、.iset
+    const FBX_URL = 'SM_Fish3.fbx';        // 你的 FBX 模型路径
 
-const container = document.querySelector('#ar');
-const hud = document.querySelector('#hud');
-const btn = document.querySelector('#start');
+    // 默认缩放与朝向，按需调整（FBX 单位通常较大）
+    const MODEL_SCALE = '0.01 0.01 0.01';
+    const MODEL_ROT   = '0 0 0';
+    const MODEL_POS   = '0 0 0';
 
-// —— MindAR：只开轻滤波，其它走默认 ——
-const mindarThree = new MindARThree({
-  container,
-  imageTargetSrc: './targets.mind',
-  uiLoading: true, uiScanning: true, uiError: true,
-  filterMinCF: 0.001,
-  filterBeta: 0.01,
-});
-const { renderer, scene, camera } = mindarThree;
-renderer.setClearColor(0x000000, 0);
-renderer.outputColorSpace = THREE.SRGBColorSpace;
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    document.getElementById('startBtn').addEventListener('click', startAR, { once: true });
 
-// —— 灯光 ——
-scene.add(new THREE.HemisphereLight(0xffffff, 0x666666, 1.0));
-const dir = new THREE.DirectionalLight(0xffffff, 0.9); dir.position.set(0,1,1); scene.add(dir);
+    function startAR () {
+      // 隐藏覆盖层
+      document.getElementById('overlay').style.display = 'none';
 
-// —— 锚点 ——
-const anchor = mindarThree.addAnchor(0);
+      // 动态创建 A-Frame 场景，避免在未授权前就访问摄像头
+      const scene = document.createElement('a-scene');
+      scene.setAttribute('embedded', '');
+      scene.setAttribute('vr-mode-ui', 'enabled: false');
+      scene.setAttribute('renderer', 'alpha: true; antialias: true; logarithmicDepthBuffer: true');
+      // AR.js 参数：NFT 图像追踪；平滑开启；后置摄像头优先
+      scene.setAttribute('arjs', [
+        'trackingMethod: best',
+        'sourceType: webcam',
+        'debugUIEnabled: false',
+        'detectionMode: mono_and_matrix', // 兼容性更好
+        'cameraParametersUrl: https://cdn.jsdelivr.net/gh/AR-js-org/AR.js@3.4.2/data/data/camera_para.dat'
+      ].join('; '));
 
-// —— 载入模型（宇航员） ——
-const gltf = await new GLTFLoader().loadAsync('./yuhangyuan.glb');
-const astro = gltf.scene;
+      // 灯光（不跟随目标）
+      const ambient = document.createElement('a-entity');
+      ambient.setAttribute('light', 'type: ambient; intensity: 0.8');
+      scene.appendChild(ambient);
 
-// 关键：防止远处视锥裁剪；材质保持正常前面渲染，不做 polygonOffset 等骚操作
-astro.traverse(n=>{
-  if (n.isMesh){
-    n.frustumCulled = false;
-    if (n.material){
-      const mats = Array.isArray(n.material) ? n.material : [n.material];
-      mats.forEach(m=>{
-        m.transparent = false; m.opacity = 1;
-        m.depthWrite = true; m.depthTest = true;
-        m.alphaTest = 0; m.blending = THREE.NormalBlending;
-        m.side = THREE.FrontSide;  // 保持默认前面渲染
-        m.needsUpdate = true;
-      });
+      const directional = document.createElement('a-entity');
+      directional.setAttribute('light', 'type: directional; intensity: 0.8');
+      directional.setAttribute('position', '0 1 1');
+      scene.appendChild(directional);
+
+      // NFT 目标锚点（所有“粘”在图片上的内容都放在它下面）
+      const nft = document.createElement('a-nft');
+      nft.setAttribute('type', 'nft');
+      nft.setAttribute('url', NFT_BASE_URL); // 省略扩展名
+      nft.setAttribute('smooth', 'true');
+      nft.setAttribute('smoothCount', '10');
+      nft.setAttribute('smoothTolerance', '0.01');
+      nft.setAttribute('smoothThreshold', '5');
+
+      // FBX 模型，自动播放所有动画片段
+      const model = document.createElement('a-entity');
+      model.setAttribute('fbx-model', `src: url(${FBX_URL})`);
+      model.setAttribute('animation-mixer', 'clip: *; loop: repeat; timeScale: 1');
+      model.setAttribute('position', MODEL_POS);
+      model.setAttribute('rotation', MODEL_ROT);
+      model.setAttribute('scale', MODEL_SCALE);
+      nft.appendChild(model);
+
+      // （可选）当目标丢失/重新识别时的事件
+      nft.addEventListener('markerFound', () => console.log('Target found'));
+      nft.addEventListener('markerLost',  () => console.log('Target lost'));
+
+      scene.appendChild(nft);
+
+      // 必须有相机实体
+      const camera = document.createElement('a-entity');
+      camera.setAttribute('camera', '');
+      scene.appendChild(camera);
+
+      document.body.appendChild(scene);
     }
-  }
-});
-
-// 姿态：立起来 + 脚贴二维码平面
-astro.rotation.set(Math.PI/2, 0, 0);
-astro.scale.setScalar(0.5);
-{
-  const parent = new THREE.Group(); parent.add(astro);
-  const saved = astro.rotation.clone();
-  astro.rotation.set(0,0,0);
-  parent.updateMatrixWorld(true);
-  const box = new THREE.Box3().setFromObject(astro);
-  astro.rotation.copy(saved);
-  astro.position.y -= box.min.y;
-}
-
-// 直接挂锚点：最稳
-anchor.group.add(astro);
-
-// 显隐：用回调通知 + 每帧兜底（以防某些设备回调漏发）
-astro.visible = false;
-anchor.onTargetFound = ()=>{ astro.visible = true;  hud.textContent = '✔ 已锁定二维码'; };
-anchor.onTargetLost  = ()=>{ astro.visible = false; hud.textContent = '… 重新锁定中'; };
-
-// —— 启动（iOS 需手势） ——
-btn.addEventListener('click', async ()=>{
-  btn.style.display = 'none';
-  try{
-    await mindarThree.start();
-    hud.textContent = '✔ 相机已开启，开始识别二维码…';
-
-    // 不再硬改 near/far，用 MindAR 默认相机参数（避免误杀可见性）
-    // camera.near/camera.far 保持默认；若仍有远处闪片，再微调，不一次性拉太极端
-
-    // 确保 <video> 铺底
-    const ensureVideo = ()=>{
-      const v = container.querySelector('video');
-      if (!v) return;
-      v.setAttribute('playsinline',''); v.setAttribute('webkit-playsinline','');
-      v.setAttribute('muted',''); v.muted = true;
-      Object.assign(v.style, {
-        position:'absolute', inset:'0', width:'100%', height:'100%',
-        objectFit:'cover', zIndex:'0', background:'#000', transform:'none'
-      });
-    };
-    ensureVideo();
-    new MutationObserver(ensureVideo).observe(container, {childList:true, subtree:true});
-
-    // 渲染循环：每帧跟随锚点可见性兜底
-    renderer.setAnimationLoop(()=>{
-      astro.visible = anchor.group.visible; // ← 关键兜底：回调漏发也能显示/隐藏
-      renderer.render(scene, camera);
-    });
-
-    window.addEventListener('resize', ()=>{
-      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    });
-
-  }catch(e){
-    hud.textContent = '✖ 无法开启相机：' + (e?.message || e);
-    btn.style.display = 'block';
-  }
-});
-</script>
+  </script>
 </body>
 </html>
