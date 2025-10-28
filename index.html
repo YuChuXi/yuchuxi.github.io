@@ -92,12 +92,12 @@
       const startButton = document.querySelector('#startButton');
       const sceneEl = document.querySelector('a-scene'); // 1. 获取 <a-scene> 元素
 
-      // 2. 关键：等待 A-Frame 的 'loaded' 事件
-      sceneEl.addEventListener('loaded', () => {
-        console.log("A-Frame 场景已完全加载。");
+      // 2. 关键：等待 MindAR 的 'arReady' 事件
+      sceneEl.addEventListener('arReady', () => {
+        console.log("MindAR 场景已准备就绪。");
 
-        // 3. 只有在场景加载后，才去获取 system
-        const mindarSystem = sceneEl.systems['mindar-image'];
+        // 3. 只有在 AR 系统准备好后，才去获取 system
+        const mindarSystem = sceneEl.systems['mindar-image-system'];
 
         // 4. 把点击事件的监听放在这里面
         startButton.addEventListener('click', () => {
