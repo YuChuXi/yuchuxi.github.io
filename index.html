@@ -1,137 +1,108 @@
-<!doctype html>
-<html lang="zh-CN">
-
+<!DOCTYPE html>
+<html>
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <title>Image Tracking FBX AR (Android + iOS)</title>
-  <!-- A-Frame core -->
-  <script src="https://aframe.io/releases/1.4.1/aframe.min.js"></script>
-  <!-- AR.js with NFT (natural image) tracking for A-Frame -->
-  <script src="https://cdn.jsdelivr.net/gh/AR-js-org/AR.js@3.4.2/aframe/build/aframe-ar-nft.js"></script>
-  <!-- Optional: Remove aframe-extras.js since it causes duplicate animation-mixer registration -->
-  <!-- <script src="https://cdn.jsdelivr.net/gh/c-frame/aframe-extras@v6.1.1/dist/aframe-extras.min.js"></script> -->
-  <style>
-    html,
-    body {
-      height: 100%;
-      margin: 0;
-      background: #000;
-    }
+  <title>AR FBX 图像跟踪</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
 
-    a-scene {
-      position: absolute;
+  <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
+  
+  <script src="https://cdn.jsdelivr.net/npm/mind-ar/dist/mindar-image-aframe.prod.js"></script>
+  
+  <script src="https://cdn.jsdelivr.net/npm/aframe-extras@7.2.0/dist/aframe-extras.min.js"></script>
+
+  <style>
+    /* 用于覆盖全屏的启动按钮 */
+    #startButtonContainer {
+      position: fixed;
       top: 0;
       left: 0;
       width: 100%;
       height: 100%;
+      background-color: rgba(0, 0, 0, 0.7);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      z-index: 10001; /* 确保在最上层 */
+      cursor: pointer;
+    }
+    #startButton {
+      font-size: 1.5em;
+      padding: 15px 30px;
+      border: none;
+      border-radius: 10px;
+      background-color: #fff;
     }
 
-    #overlay {
+    /* MindAR 默认的扫描 UI (可选) */
+    #scanningOverlay {
       position: fixed;
-      inset: 0;
-      display: grid;
-      place-items: center;
-      background: #0b0b0bcc;
-      color: #fff;
-      z-index: 10;
-      padding: 24px;
-      font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      background-color: transparent; /* 透明背景 */
+      z-index: 10000;
+    }
+    .mindar-ui-scanning .mindar-ui-scanning-overlay {
+       /* 扫描动画的样式 */
+       border: dashed 2px white;
     }
   </style>
 </head>
 
 <body>
-  <!-- Click-to-start overlay (satisfies iOS user gesture) -->
-  <div id="overlay">
-    <div style="text-align:center">
-      <h2 style="margin:0 0 8px">点击开始 AR</h2>
-      <button class="btn" id="startBtn">进入相机并识别图片</button>
-      <div class="tips">请在 HTTPS 下打开。将摄像头对准你训练过的图片目标，FBX 模型会“粘”在图片上并播放内置动画。</div>
+  
+  <div id="startButtonContainer">
+    <button id="startButton">点击进入 AR</button>
+  </div>
+
+  <div id="scanningOverlay" style="display: none;">
+    <div class="mindar-ui-scanning">
+      <div class="mindar-ui-scanning-overlay"></div>
     </div>
   </div>
 
+  <a-scene 
+    mindar-image="imageTargetSrc: ./target/龙.mind; autoStart: false; uiStarting: #startButtonContainer; uiScanning: #scanningOverlay;"
+    color-space="sRGB" 
+    renderer="colorManagement: true, physicallyCorrectLights" 
+    vr-mode-ui="enabled: false" 
+    device-orientation-permission-ui="enabled: false">
+
+    <a-assets>
+      <a-asset-item id="myModel" src="./SM_Fish3.fbx"></a-asset-item>
+    </a-assets>
+
+    <a-camera position="0 0 0" look-controls="enabled: false"></a-camera>
+
+    <a-entity mindar-image-target="targetIndex: 0">
+      
+      <a-entity
+        fbx-model="src: #myModel"
+        animation-mixer="clip: *"
+        position="0 0 0"
+        scale="0.1 0.1 0.1"
+        rotation="0 0 0"
+      >
+      </a-entity>
+    </a-entity>
+
+  </a-scene>
+
   <script>
-    // ---- 配置：把下面的路径替换为你的资源 ----
-    const NFT_BASE_URL = './target/龙'; // 不要写扩展名；需要 three 个文件：.fset、.fset3、.iset
-    const FBX_URL = './SM_Fish3.fbx';        // 你的 FBX 模型路径
-
-    // 默认缩放与朝向，按需调整（FBX 单位通常较大）
-    const MODEL_SCALE = '0.01 0.01 0.01';
-    const MODEL_ROT = '0 0 0';
-    const MODEL_POS = '0 0 0';
-
-
-    function startAR() {
-      // 隐藏覆盖层
-      document.getElementById('overlay').style.display = 'none';
-
-      // 动态创建 A-Frame 场景，避免在未授权前就访问摄像头
-      const scene = document.createElement('a-scene');
-      scene.setAttribute('embedded', '');
-      scene.setAttribute('vr-mode-ui', 'enabled: false');
-      scene.setAttribute('renderer', 'alpha: true; antialias: true; logarithmicDepthBuffer: true');
-      // AR.js 参数：NFT 图像追踪；平滑开启；后置摄像头优先
-      scene.setAttribute('arjs', [
-        'trackingMethod: best',
-        'sourceType: webcam',
-        'debugUIEnabled: true',
-        'detectionMode: mono_and_matrix', // 兼容性更好
-        'cameraParametersUrl: https://cdn.jsdelivr.net/gh/AR-js-org/AR.js@3.4.2/data/data/camera_para.dat'
-      ].join('; '));
-
-      // 创建灯光（不跟随目标）
-      const ambient = document.createElement('a-entity');
-      ambient.setAttribute('light', 'type: ambient; intensity: 0.8');
-      scene.appendChild(ambient);
-
-      const directional = document.createElement('a-entity');
-      directional.setAttribute('light', 'type: directional; intensity: 0.8');
-      directional.setAttribute('position', '0 1 1');
-      scene.appendChild(directional);
-
-      // 创建 NFT 图像标记并设置路径
-      const nft = document.createElement('a-nft');
-      nft.setAttribute('type', 'nft');
-      nft.setAttribute('url', NFT_BASE_URL); // 省略扩展名
-      nft.setAttribute('smooth', 'true');
-      nft.setAttribute('smoothCount', '10');
-      nft.setAttribute('smoothTolerance', '0.01');
-      nft.setAttribute('smoothThreshold', '5');
-
-      // 调试：输出是否加载了 NFT
-      console.log("NFT Loaded:", NFT_BASE_URL);
-
-      // 创建 FBX 模型
-      const model = document.createElement('a-entity');
-      model.setAttribute('fbx-model', `src: url(${FBX_URL})`);
-      model.setAttribute('animation-mixer', 'clip: *; loop: repeat; timeScale: 1');
-      model.setAttribute('position', MODEL_POS);
-      model.setAttribute('rotation', MODEL_ROT);
-      model.setAttribute('scale', MODEL_SCALE);
-
-      // 调试：输出是否加载了 FBX 模型
-      console.log("FBX Model Loaded:", model);
-
-      nft.appendChild(model);
-
-      // （可选）当目标丢失/重新识别时的事件
-      nft.addEventListener('markerFound', () => console.log('Target found'));
-      nft.addEventListener('markerLost', () => console.log('Target lost'));
-
-      scene.appendChild(nft);
-
-      // 必须有相机实体
-      const camera = document.createElement('a-entity');
-      camera.setAttribute('camera', '');
-      scene.appendChild(camera);
-
-      document.body.appendChild(scene);
-    }
-
-    document.getElementById('startBtn').addEventListener('click', startAR, { once: true });
-
+    document.addEventListener('DOMContentLoaded', () => {
+      const startButton = document.querySelector('#startButton');
+      const scene = document.querySelector('a-scene');
+      
+      startButton.addEventListener('click', () => {
+        // 按钮点击后，手动启动 MindAR 场景
+        // MindAR 会自动隐藏 'uiStarting' (startButtonContainer)
+        scene.systems['mindar-image'].start();
+      });
+    });
   </script>
 </body>
-
 </html>
