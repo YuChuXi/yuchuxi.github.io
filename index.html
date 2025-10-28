@@ -8,12 +8,8 @@
   <script src="https://aframe.io/releases/1.4.1/aframe.min.js"></script>
   <!-- AR.js with NFT (natural image) tracking for A-Frame -->
   <script src="https://cdn.jsdelivr.net/gh/AR-js-org/AR.js@3.4.2/aframe/build/aframe-ar-nft.js"></script>
-  <!-- A-Frame Extras: animation-mixer -->
-  <script src="https://cdn.jsdelivr.net/gh/c-frame/aframe-extras@v6.1.1/dist/aframe-extras.min.js"></script>
-  <!-- A-Frame Extras loaders (registers fbx-model component) -->
-  <script src="https://cdn.jsdelivr.net/gh/c-frame/aframe-extras@v6.1.1/dist/aframe-extras.loaders.min.js"></script>
-  <!-- Optional dependency used by FBXLoader in some cases -->
-  <script src="https://cdn.jsdelivr.net/npm/three@0.152.2/examples/js/libs/inflate.min.js"></script>
+  <!-- Optional: Remove aframe-extras.js since it causes duplicate animation-mixer registration -->
+  <!-- <script src="https://cdn.jsdelivr.net/gh/c-frame/aframe-extras@v6.1.1/dist/aframe-extras.min.js"></script> -->
   <style>
     html, body { height: 100%; margin: 0; background:#000; }
     #overlay {
