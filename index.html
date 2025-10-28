@@ -11,16 +11,32 @@
   <!-- Optional: Remove aframe-extras.js since it causes duplicate animation-mixer registration -->
   <!-- <script src="https://cdn.jsdelivr.net/gh/c-frame/aframe-extras@v6.1.1/dist/aframe-extras.min.js"></script> -->
   <style>
-    html, body { height: 100%; margin: 0; background:#000; }
-    #overlay {
-      position: fixed; inset: 0; display: grid; place-items: center;
-      background: #0b0b0bcc; color: #fff; z-index: 10; padding: 24px;
-      font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
-    }
-    .btn { appearance: none; border: 0; padding: 14px 18px; font-size: 16px;
-      background: #10b981; color: #00110a; border-radius: 12px; cursor: pointer; }
-    .btn:active { transform: translateY(1px); }
-    .tips { max-width: 520px; text-align: center; opacity: .9; line-height: 1.5; margin-top: 12px; font-size: 14px; }
+html, body {
+  height: 100%;
+  margin: 0;
+  background: #000;
+}
+
+a-scene {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+}
+
+#overlay {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: #0b0b0bcc;
+  color: #fff;
+  z-index: 10;
+  padding: 24px;
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+}
+
   </style>
 </head>
 <body>
@@ -58,7 +74,7 @@
       scene.setAttribute('arjs', [
         'trackingMethod: best',
         'sourceType: webcam',
-        'debugUIEnabled: false',
+        'debugUIEnabled: true',
         'detectionMode: mono_and_matrix', // 兼容性更好
         'cameraParametersUrl: https://cdn.jsdelivr.net/gh/AR-js-org/AR.js@3.4.2/data/data/camera_para.dat'
       ].join('; '));
