@@ -1,13 +1,14 @@
 <!DOCTYPE html>
 <html>
+
 <head>
   <title>AR FBX 图像跟踪</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
 
   <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
-  
+
   <script src="https://cdn.jsdelivr.net/npm/mind-ar/dist/mindar-image-aframe.prod.js"></script>
-  
+
   <script src="https://cdn.jsdelivr.net/npm/aframe-extras@7.2.0/dist/aframe-extras.min.js"></script>
 
   <style>
@@ -22,9 +23,11 @@
       display: flex;
       justify-content: center;
       align-items: center;
-      z-index: 10001; /* 确保在最上层 */
+      z-index: 10001;
+      /* 确保在最上层 */
       cursor: pointer;
     }
+
     #startButton {
       font-size: 1.5em;
       padding: 15px 30px;
@@ -43,18 +46,20 @@
       display: flex;
       justify-content: center;
       align-items: center;
-      background-color: transparent; /* 透明背景 */
+      background-color: transparent;
+      /* 透明背景 */
       z-index: 10000;
     }
+
     .mindar-ui-scanning .mindar-ui-scanning-overlay {
-       /* 扫描动画的样式 */
-       border: dashed 2px white;
+      /* 扫描动画的样式 */
+      border: dashed 2px white;
     }
   </style>
 </head>
 
 <body>
-  
+
   <div id="startButtonContainer">
     <button id="startButton">点击进入 AR</button>
   </div>
@@ -65,13 +70,9 @@
     </div>
   </div>
 
-  <a-scene 
-    mindar-image="imageTargetSrc: ./target/龙.mind; autoStart: false; uiStarting: #startButtonContainer; uiScanning: #scanningOverlay;"
-    color-space="sRGB" 
-    renderer="colorManagement: true, physicallyCorrectLights" 
-    vr-mode-ui="enabled: false" 
+  <a-scene mindar-image="imageTargetSrc: ./target/龙.mind; autoStart: false; uiScanning: #scanningOverlay;"
+    color-space="sRGB" renderer="colorManagement: true, physicallyCorrectLights" vr-mode-ui="enabled: false"
     device-orientation-permission-ui="enabled: false">
-
     <a-assets>
       <a-asset-item id="myModel" src="./SM_Fish3.glb"></a-asset-item>
     </a-assets>
@@ -79,14 +80,8 @@
     <a-camera position="0 0 0" look-controls="enabled: false"></a-camera>
 
     <a-entity mindar-image-target="targetIndex: 0">
-      
-      <a-entity
-        gltf-model="#myModel"
-        animation-mixer="clip: *"
-        position="0 0 0"
-        scale="0.1 0.1 0.1"
-        rotation="0 0 0"
-      >
+
+      <a-entity gltf-model="#myModel" animation-mixer="clip: *" position="0 0 0" scale="0.1 0.1 0.1" rotation="0 0 0">
       </a-entity>
     </a-entity>
 
@@ -94,15 +89,29 @@
 
   <script>
     document.addEventListener('DOMContentLoaded', () => {
+      const startButtonContainer = document.querySelector('#startButtonContainer');
       const startButton = document.querySelector('#startButton');
-      const scene = document.querySelector('a-scene');
-      
-      startButton.addEventListener('click', () => {
-        // 按钮点击后，手动启动 MindAR 场景
-        // MindAR 会自动隐藏 'uiStarting' (startButtonContainer)
-        scene.systems['mindar-image'].start();
+      const sceneEl = document.querySelector('a-scene'); // 1. 获取 <a-scene> 元素
+
+      // 2. 关键：等待 A-Frame 的 'loaded' 事件
+      sceneEl.addEventListener('loaded', () => {
+        console.log("A-Frame 场景已完全加载。");
+
+        // 3. 只有在场景加载后，才去获取 system
+        const mindarSystem = sceneEl.systems['mindar-image'];
+
+        // 4. 把点击事件的监听放在这里面
+        startButton.addEventListener('click', () => {
+          if (mindarSystem) {
+            startButtonContainer.style.display = 'none'; // 手动隐藏按钮
+            mindarSystem.start(); // 现在调用 .start() 绝对安全
+          } else {
+            console.error("MindAR 系统未找到。请检查 <a-scene> 上的 mindar-image 属性。");
+          }
+        });
       });
     });
   </script>
 </body>
+
 </html>
